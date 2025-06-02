@@ -1,11 +1,16 @@
+import os
+import re
+from typing import Iterator, List, Tuple
+
+# from torchtext.data.utils import get_tokenizer
+# from torchtext.datasets import WikiText2
+# from torchtext.vocab import build_vocab_from_iterator
+import requests
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
-from torchtext.data.utils import get_tokenizer
-from torchtext.datasets import WikiText2
-from torchtext.vocab import build_vocab_from_iterator
 
 
 class LLMConfig:
@@ -210,7 +215,18 @@ class ToyLLM(nn.Module):
 
 
 # --- Data Loading and Preprocessing for WikiText-2 with MLM ---
-TOKENIZER = get_tokenizer("basic_english")
+# TOKENIZER = get_tokenizer("basic_english")
+# Replace the torchtext tokenizer and dataset with our implementation
+def basic_english_tokenizer(text: str) -> List[str]:
+    """Simple tokenizer that splits on whitespace and punctuation"""
+    # Convert to lowercase and split on whitespace
+    text = text.lower()
+    # Split on whitespace and punctuation
+    tokens = re.findall(r"\b\w+\b|[^\w\s]", text)
+    return tokens
+
+
+TOKENIZER = basic_english_tokenizer
 UNK_TOKEN, PAD_TOKEN, MASK_TOKEN, BOS_TOKEN, EOS_TOKEN = (
     "<unk>",
     "<pad>",
@@ -227,12 +243,75 @@ def yield_tokens(data_iter, tokenizer_fn):
 
 
 def build_vocab_from_wikitext2(min_freq=5):
-    train_iter, _, _ = WikiText2()  # Using train split to build vocab
-    vocab = build_vocab_from_iterator(
-        yield_tokens(train_iter, TOKENIZER), min_freq=min_freq, specials=SPECIAL_TOKENS
+    # Explicitly create an instance of your WikiText2Dataset class
+    dataset_loader = WikiText2Dataset()  # Assuming default root='.data' is fine
+
+    # Call the instance to get the tuple of iterators
+    # This invokes the __call__ method of WikiText2Dataset
+    train_iter, valid_iter_dummy, test_iter_dummy = dataset_loader()
+    # We only need train_iter for building the vocab here, so we can ignore the others or use '_'
+
+    # Now use your custom build_vocab_from_iterator
+    vocab = build_vocab_from_iterator(  # This should be your custom function
+        yield_tokens(
+            train_iter, TOKENIZER
+        ),  # TOKENIZER should be your basic_english_tokenizer
+        min_freq=min_freq,
+        specials=SPECIAL_TOKENS,
     )
-    vocab.set_default_index(vocab[UNK_TOKEN])
+    # Your custom Vocab class already sets a default_index to <unk> if present in specials.
+    # If you need to explicitly set it again or change it, this line is fine:
+    # vocab.set_default_index(vocab[UNK_TOKEN]) # This is valid for your custom Vocab class
     return vocab
+
+
+def build_vocab_from_iterator(iterator, min_freq, specials):
+    from collections import Counter, OrderedDict
+
+    token_counts = Counter()
+    for tokens in iterator:
+        token_counts.update(tokens)
+
+    # Sort tokens by frequency and then alphabetically
+    sorted_by_freq_tuples = sorted(
+        token_counts.items(), key=lambda x: (x[1], x[0]), reverse=True
+    )
+
+    # Filter tokens based on minimum frequency
+    filtered_tokens = [
+        token for token, count in sorted_by_freq_tuples if count >= min_freq
+    ]
+
+    # Create an ordered vocabulary list
+    vocab_list = OrderedDict()
+    for token in specials:
+        vocab_list[token] = len(vocab_list)
+    for token in filtered_tokens:
+        if token not in vocab_list:
+            vocab_list[token] = len(vocab_list)
+
+    # Mapping tokens to indices
+    token_to_index = {token: idx for idx, token in enumerate(vocab_list.keys())}
+
+    class Vocab:
+        def __init__(self, token_to_index, specials):
+            self.token_to_index = token_to_index
+            self.index_to_token = {idx: token for token, idx in token_to_index.items()}
+            self.specials = specials
+            self.default_index = token_to_index.get(
+                "<unk>"
+            )  # Assuming <unk> is your unknown token
+
+        def __len__(self):
+            return len(self.token_to_index)
+
+        def __getitem__(self, token):
+            return self.token_to_index.get(token, self.default_index)
+
+        def set_default_index(self, index):
+            self.default_index = index
+
+    return Vocab(token_to_index, specials)
 
 
 def create_mlm_inputs_and_labels(token_ids, vocab, mlm_probability=0.15):
@@ -364,6 +443,50 @@ def pretrain_wikitext2_epoch(
     return total_loss / num_batches if num_batches > 0 else 0
 
 
+class WikiText2Dataset:
+    URLS = {
+        "train": "https://raw.githubusercontent.com/pytorch/examples/master/"
+        "word_language_model/data/wikitext-2/wiki.train.tokens",
+        "valid": "https://raw.githubusercontent.com/pytorch/examples/master/"
+        "word_language_model/data/wikitext-2/wiki.valid.tokens",
+        "test": "https://raw.githubusercontent.com/pytorch/examples/master/"
+        "word_language_model/data/wikitext-2/wiki.test.tokens",
+    }
+
+    def __init__(self, root: str = ".data"):
+        self.root = root
+        os.makedirs(root, exist_ok=True)
+
+    def _download_file(self, url: str, filename: str) -> str:
+        filepath = os.path.join(self.root, filename)
+        if not os.path.exists(filepath):
+            response = requests.get(url)
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(response.text)
+        return filepath
+
+    def _load_data(self, filepath: str) -> Iterator[str]:
+        with open(filepath, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("="):  # Skip section headers
+                    yield line
+
+    def __call__(self) -> Tuple[Iterator[str], Iterator[str], Iterator[str]]:
+        train_file = self._download_file(self.URLS["train"], "wiki.train.tokens")
+        valid_file = self._download_file(self.URLS["valid"], "wiki.valid.tokens")
+        test_file = self._download_file(self.URLS["test"], "wiki.test.tokens")
+
+        return (
+            self._load_data(train_file),
+            self._load_data(valid_file),
+            self._load_data(test_file),
+        )
+
+
+# Replace the torchtext tokenizer and dataset with our implementation
+WikiText2 = WikiText2Dataset
+
 # --- Example Usage: Pre-training ---
 if __name__ == "__main__":
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -402,11 +525,16 @@ if __name__ == "__main__":
     )
 
     # For this example, let's process the training data into a list of strings.
-    train_iter_raw, valid_iter_raw, test_iter_raw = WikiText2()
-    train_data_list = [
-        line for line in train_iter_raw if line.strip()
-    ]  # Collect non-empty lines
-    # You would typically use valid_iter for validation during pre-training.
+    dataset_loader_main = WikiText2Dataset(root=".data")
+    train_iter_raw, valid_iter_raw, test_iter_raw = dataset_loader_main()
+
+    train_data_list = [line for line in train_iter_raw if line.strip()]
+    print(f"Number of training samples (lines): {len(train_data_list)}")
+
+    valid_data_list = [
+        line for line in valid_iter_raw if line.strip()
+    ]  # Create the list
+    print(f"Number of validation samples (lines): {len(valid_data_list)}")
 
     BATCH_SIZE = 16  # Adjust based on your GPU memory
 
@@ -415,13 +543,13 @@ if __name__ == "__main__":
     )
 
     train_dataloader = DataLoader(
-        train_data_list,
+        train_data_list,  # Use the list
         batch_size=BATCH_SIZE,
         shuffle=True,
         collate_fn=collate_fn_partial,
     )
     valid_dataloader = DataLoader(
-        list(valid_iter_raw),
+        valid_data_list,  # CORRECTED: Use the list you created
         batch_size=BATCH_SIZE,
         shuffle=False,
         collate_fn=collate_fn_partial,

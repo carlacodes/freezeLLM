@@ -3,4 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="uv (llm_mech_interp)" />
   </component>
+  <component name="ProjectRootManager" version="2" project-jdk-name="uv (llm_mech_interp) (5)" project-jdk-type="Python SDK" />
 </project>
