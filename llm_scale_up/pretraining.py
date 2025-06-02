@@ -1,14 +1,10 @@
-import os
 import re
 from typing import Iterator, List, Tuple
 
-# from torchtext.data.utils import get_tokenizer
-# from torchtext.datasets import WikiText2
-# from torchtext.vocab import build_vocab_from_iterator
-import requests
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from datasets import load_dataset  # ADD THIS IMPORT
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 
@@ -444,43 +440,82 @@ def pretrain_wikitext2_epoch(
 
 
 class WikiText2Dataset:
-    URLS = {
-        "train": "https://raw.githubusercontent.com/pytorch/examples/master/"
-        "word_language_model/data/wikitext-2/wiki.train.tokens",
-        "valid": "https://raw.githubusercontent.com/pytorch/examples/master/"
-        "word_language_model/data/wikitext-2/wiki.valid.tokens",
-        "test": "https://raw.githubusercontent.com/pytorch/examples/master/"
-        "word_language_model/data/wikitext-2/wiki.test.tokens",
-    }
+    # Using Hugging Face Salesforce/wikitext dataset
+    DATASET_NAME = "Salesforce/wikitext"
+    # 'wikitext-2-v1' is word-level tokenized and cleaned.
+    # It provides text lines where tokens are generally space-separated,
+    # similar to the .tokens files you were using.
+    CONFIG_NAME = "wikitext-2-v1"
 
-    def __init__(self, root: str = ".data"):
-        self.root = root
-        os.makedirs(root, exist_ok=True)
+    def __init__(self, cache_dir: str = None):
+        """
+        Initializes the dataset loader.
+        Args:
+            cache_dir (str, optional): Directory to cache downloaded datasets.
+                                       If None, Hugging Face's default cache is used.
+        """
+        self.cache_dir = cache_dir
+        print(
+            f"Preparing to load WikiText-2 using Hugging Face datasets: "
+            f"{self.DATASET_NAME} (config: {self.CONFIG_NAME})."
+        )
+        print(
+            "Data will be downloaded/loaded from Hugging Face cache "
+            "(typically in ~/.cache/huggingface/datasets)."
+        )
+        # os.makedirs for a custom cache_dir would be handled by the datasets library
+        # or could be added here if you enforce a specific structure.
 
-    def _download_file(self, url: str, filename: str) -> str:
-        filepath = os.path.join(self.root, filename)
-        if not os.path.exists(filepath):
-            response = requests.get(url)
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(response.text)
-        return filepath
+    def _hf_dataset_to_line_iterator(self, hf_split_dataset) -> Iterator[str]:
+        """
+        Helper to iterate through a Hugging Face dataset split and yield text lines.
+        Applies similar filtering to your original _load_data method.
+        """
+        for item in hf_split_dataset:
+            # The Hugging Face dataset usually has a 'text' field for each entry.
+            # You can inspect an item (e.g., print(hf_split_dataset[0])) to confirm the field name.
+            text_line = item.get("text", "").strip()
 
-    def _load_data(self, filepath: str) -> Iterator[str]:
-        with open(filepath, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("="):  # Skip section headers
-                    yield line
+            # Keep similar filtering for consistency with how .tokens files might be structured
+            # (e.g., skipping empty lines or Wiki section headers if they appear)
+            if (
+                text_line
+                and not text_line.startswith(" = ")
+                and not text_line.startswith("= ")
+            ):
+                yield text_line
 
     def __call__(self) -> Tuple[Iterator[str], Iterator[str], Iterator[str]]:
-        train_file = self._download_file(self.URLS["train"], "wiki.train.tokens")
-        valid_file = self._download_file(self.URLS["valid"], "wiki.valid.tokens")
-        test_file = self._download_file(self.URLS["test"], "wiki.test.tokens")
+        """
+        Loads and returns iterators for the train, validation, and test splits
+        of the WikiText-2 dataset. Each iterator yields lines of text.
+        """
+        print(f"Loading 'train' split from {self.DATASET_NAME}/{self.CONFIG_NAME}...")
+        train_hf_ds = load_dataset(
+            self.DATASET_NAME, self.CONFIG_NAME, split="train", cache_dir=self.cache_dir
+        )
+
+        print(
+            f"Loading 'validation' split from {self.DATASET_NAME}/{self.CONFIG_NAME}..."
+        )
+        valid_hf_ds = load_dataset(
+            self.DATASET_NAME,
+            self.CONFIG_NAME,
+            split="validation",
+            cache_dir=self.cache_dir,
+        )
+
+        print(f"Loading 'test' split from {self.DATASET_NAME}/{self.CONFIG_NAME}...")
+        test_hf_ds = load_dataset(
+            self.DATASET_NAME, self.CONFIG_NAME, split="test", cache_dir=self.cache_dir
+        )
+
+        print("Dataset splits loaded from Hugging Face.")
 
         return (
-            self._load_data(train_file),
-            self._load_data(valid_file),
-            self._load_data(test_file),
+            self._hf_dataset_to_line_iterator(train_hf_ds),
+            self._hf_dataset_to_line_iterator(valid_hf_ds),
+            self._hf_dataset_to_line_iterator(test_hf_ds),
         )
 
 
@@ -525,7 +560,10 @@ if __name__ == "__main__":
     )
 
     # For this example, let's process the training data into a list of strings.
-    dataset_loader_main = WikiText2Dataset(root=".data")
+    dataset_loader_main = WikiText2Dataset(
+        cache_dir=".data"
+    )  # Use cache_dir instead of root
+
     train_iter_raw, valid_iter_raw, test_iter_raw = dataset_loader_main()
 
     train_data_list = [line for line in train_iter_raw if line.strip()]
