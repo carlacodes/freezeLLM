@@ -66,5 +66,5 @@ repos:
 # you can define them globally, though it's often better to do it per-hook if needed.
 exclude: |
   (?x)^(
-      \.venv/.* # Exclude typical virtual environment folders
+      \.venv/.*
   )$
