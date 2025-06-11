@@ -3,4 +3,6 @@ name = "llm-mech-interp"
 version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "certifi>=2025.4.26",
+]
