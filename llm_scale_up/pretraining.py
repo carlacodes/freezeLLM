@@ -597,7 +597,7 @@ if __name__ == "__main__":
     optimizer = optim.AdamW(toy_llm_pretrained.parameters(), lr=LEARNING_RATE)
     criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
-    NUM_PRETRAIN_EPOCHS = 1000
+    NUM_PRETRAIN_EPOCHS = 30
     print(f"\nStarting MLM pre-training for {NUM_PRETRAIN_EPOCHS} epochs...")
 
     for epoch in range(1, NUM_PRETRAIN_EPOCHS + 1):
@@ -658,7 +658,7 @@ if __name__ == "__main__":
 
     print("\nPre-training finished.")
 
-    PRETRAINED_MODEL_PATH = "toy_llm_wikitext2_pretrained.pth"
+    PRETRAINED_MODEL_PATH = "models/toy_llm_wikitext2_pretrained.pth"
     torch.save(toy_llm_pretrained.state_dict(), PRETRAINED_MODEL_PATH)
     print(f"Pre-trained model state_dict saved to {PRETRAINED_MODEL_PATH}")
 
