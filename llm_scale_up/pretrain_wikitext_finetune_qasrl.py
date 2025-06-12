@@ -611,7 +611,7 @@ if __name__ == "__main__":
 
         optimizer_pretrain = optim.AdamW(pretrain_model.parameters(), lr=1e-4)
         criterion_mlm = nn.CrossEntropyLoss(ignore_index=-100)
-        NUM_PRETRAIN_EPOCHS = 5
+        NUM_PRETRAIN_EPOCHS = 30
 
         for epoch in range(1, NUM_PRETRAIN_EPOCHS + 1):
             avg_epoch_loss = pretrain_epoch(
