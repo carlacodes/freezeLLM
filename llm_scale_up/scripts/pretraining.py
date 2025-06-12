@@ -561,7 +561,7 @@ if __name__ == "__main__":
 
     # For this example, let's process the training data into a list of strings.
     dataset_loader_main = WikiText2Dataset(
-        cache_dir=".data"
+        cache_dir="../.data"
     )  # Use cache_dir instead of root
 
     train_iter_raw, valid_iter_raw, test_iter_raw = dataset_loader_main()

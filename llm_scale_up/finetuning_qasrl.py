@@ -9,6 +9,8 @@ from datasets import load_dataset
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
 
+# need to modularise this later
+
 
 class LLMConfig:
     """Holds the configuration for a toy LLM."""
@@ -295,17 +297,14 @@ def build_vocab_from_iterator(iterator, min_freq, specials):
     return Vocab(token_to_index, specials)
 
 
-# --- NEW: Unified Vocabulary Builder ---
 def build_unified_vocab(min_freq=5):
     """Builds a vocabulary from both wikitext-2 and qa_srl train splits."""
     print("Building unified vocabulary from wikitext-2 and qa_srl...")
 
-    # 1. Create an iterator for wikitext-2 tokens
     wikitext_loader = WikiText2Dataset()
     wikitext_train_iter, _, _ = wikitext_loader()
     wikitext_tokens_iter = yield_tokens(wikitext_train_iter, TOKENIZER)
 
-    # 2. Create an iterator for qa_srl tokens
     print("Loading qa_srl 'train' split for vocabulary building...")
     qa_srl_dataset = load_dataset("qa_srl", split="train", trust_remote_code=True)
 
@@ -323,10 +322,9 @@ def build_unified_vocab(min_freq=5):
 
     qa_srl_tokens_iter = qa_srl_token_iterator()
 
-    # 3. Chain the iterators together
+    # Chain the iterators together
     combined_iterator = chain(wikitext_tokens_iter, qa_srl_tokens_iter)
 
-    # 4. Build the vocabulary from the combined iterator
     vocab = build_vocab_from_iterator(
         combined_iterator,
         min_freq=min_freq,
@@ -465,11 +463,9 @@ class QASRLDataset(Dataset):
     def _preprocess(self):
         processed = []
         for example in self.dataset:
-            # Use the sentence directly instead of sentence_tokens
             context = example["sentence"]
             context_tokens = self.tokenizer_fn(context)
 
-            # Create question from the question tokens list
             question = " ".join(
                 [token for token in example["question"] if token != "_"]
             )
@@ -484,7 +480,6 @@ class QASRLDataset(Dataset):
                 [self.bos_id] + input_tokens[: self.max_seq_len - 2] + [self.eos_id]
             )
 
-            # Process each answer separately
             for answer in example["answers"]:
                 answer_tokens = self.tokenizer_fn(answer)
                 context_offset = len(question_tokens) + 1
@@ -564,7 +559,6 @@ def finetune_qa_epoch(model, dataloader, optimizer, device, epoch_num, log_inter
 
 
 if __name__ == "__main__":
-    # --- Shared Setup ---
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {DEVICE}")
 
@@ -575,12 +569,10 @@ if __name__ == "__main__":
     print(f"Unified vocabulary size: {VOCAB_SIZE}")
     print(f"PAD token ID: {PAD_TOKEN_ID}")
 
-    # Model Configuration
     tiny_config = LLMConfig(name="TinyQA", n_layers=2, hidden_size=128, n_heads=2)
     MAX_SEQ_LEN = 256
     DROPOUT_RATE = 0.1
 
-    # Instantiate the base model
     base_llm = ToyLLM(
         config=tiny_config,
         vocab_size=VOCAB_SIZE,
@@ -594,8 +586,6 @@ if __name__ == "__main__":
         f"Instantiated Base Model: {tiny_config.name} with {num_params:,} trainable parameters."
     )
 
-    # --- Step 1: Pre-training on WikiText-2 ---
-    # MUST run pre-training with the new unified vocab
     RUN_PRETRAINING = False
     PRETRAINED_MODEL_PATH = "models/toy_llm_unified_pretrained.pth"
 
@@ -603,7 +593,7 @@ if __name__ == "__main__":
         print("\n--- Starting MLM Pre-training with Unified Vocab ---")
         pretrain_model = ToyLLMForPretraining(base_llm).to(DEVICE)
 
-        # We only pre-train on wikitext-2, but with the full vocabulary
+        # We only pre-train on wikitext-2, but with the full, combined vocabulary
         dataset_loader_main = WikiText2Dataset()
         train_iter_raw, _, _ = dataset_loader_main()
         train_data_list = [line for line in train_iter_raw if line.strip()]
@@ -644,7 +634,6 @@ if __name__ == "__main__":
             f"\nSkipping pre-training. Attempting to load model from: {PRETRAINED_MODEL_PATH}"
         )
 
-    # --- Step 2: Fine-tuning on QA-SRL ---
     print("\n--- Starting Fine-tuning on QA-SRL ---")
 
     qa_model = ToyLLMForQuestionAnswering(base_llm).to(DEVICE)
