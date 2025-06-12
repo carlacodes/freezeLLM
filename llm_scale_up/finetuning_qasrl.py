@@ -465,32 +465,39 @@ class QASRLDataset(Dataset):
     def _preprocess(self):
         processed = []
         for example in self.dataset:
-            context = " ".join(example["sentence_tokens"])
+            # Use the sentence directly instead of sentence_tokens
+            context = example["sentence"]
             context_tokens = self.tokenizer_fn(context)
-            for qa_pair in example["qa_pairs"]:
-                question = qa_pair["question"]
-                question_tokens = self.tokenizer_fn(question)
-                input_tokens = (
-                    [self.vocab[t] for t in question_tokens]
-                    + [self.sep_id]
-                    + [self.vocab[t] for t in context_tokens]
-                )
-                input_ids = (
-                    [self.bos_id] + input_tokens[: self.max_seq_len - 2] + [self.eos_id]
-                )
+
+            # Create question from the question tokens list
+            question = " ".join(
+                [token for token in example["question"] if token != "_"]
+            )
+            question_tokens = self.tokenizer_fn(question)
+
+            input_tokens = (
+                [self.vocab[t] for t in question_tokens]
+                + [self.sep_id]
+                + [self.vocab[t] for t in context_tokens]
+            )
+            input_ids = (
+                [self.bos_id] + input_tokens[: self.max_seq_len - 2] + [self.eos_id]
+            )
+
+            # Process each answer separately
+            for answer in example["answers"]:
+                answer_tokens = self.tokenizer_fn(answer)
+                context_offset = len(question_tokens) + 1
+                answer_ids = [self.vocab[t] for t in answer_tokens]
+                context_ids = [self.vocab[t] for t in context_tokens]
+
                 start_pos, end_pos = 0, 0
-                if qa_pair["spans"]:
-                    answer_span = qa_pair["spans"][0]
-                    answer_text = answer_span["text"]
-                    answer_tokens = self.tokenizer_fn(answer_text)
-                    context_offset = len(question_tokens) + 1
-                    answer_ids = [self.vocab[t] for t in answer_tokens]
-                    context_ids = [self.vocab[t] for t in context_tokens]
-                    for i in range(len(context_ids) - len(answer_ids) + 1):
-                        if context_ids[i : i + len(answer_ids)] == answer_ids:
-                            start_pos = context_offset + i + 1
-                            end_pos = start_pos + len(answer_ids) - 1
-                            break
+                for i in range(len(context_ids) - len(answer_ids) + 1):
+                    if context_ids[i : i + len(answer_ids)] == answer_ids:
+                        start_pos = context_offset + i + 1
+                        end_pos = start_pos + len(answer_ids) - 1
+                        break
+
                 if start_pos > 0 and end_pos < len(input_ids) - 1:
                     processed.append(
                         {
@@ -499,6 +506,7 @@ class QASRLDataset(Dataset):
                             "end_position": torch.tensor(end_pos, dtype=torch.long),
                         }
                     )
+
         print(
             f"Finished preprocessing '{self.dataset.split}'. Found {len(processed)} valid QA examples."
         )
@@ -588,7 +596,7 @@ if __name__ == "__main__":
 
     # --- Step 1: Pre-training on WikiText-2 ---
     # MUST run pre-training with the new unified vocab
-    RUN_PRETRAINING = True
+    RUN_PRETRAINING = False
     PRETRAINED_MODEL_PATH = "models/toy_llm_unified_pretrained.pth"
 
     if RUN_PRETRAINING:
@@ -662,7 +670,7 @@ if __name__ == "__main__":
     )
 
     optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=5e-5)
-    NUM_FINETUNE_EPOCHS = 3
+    NUM_FINETUNE_EPOCHS = 50
 
     print(f"Starting fine-tuning for {NUM_FINETUNE_EPOCHS} epochs...")
     for epoch in range(1, NUM_FINETUNE_EPOCHS + 1):

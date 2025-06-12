@@ -3,3 +3,5 @@
 .idea
 .data
 .models
+models
+llm_scale_up/models
