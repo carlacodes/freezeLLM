@@ -53,7 +53,7 @@ repos:
       - id: flake8
         args:
           - --max-line-length=120
-          - --ignore=E203,W503
+          - --ignore=E203,W503,E731
         # Checks for PEP 8 compliance, programming errors (like unused imports, undefined names),
         # and code complexity.
         # args: [--max-line-length=88, --ignore=E203,W503] # Example: align with black, ignore specific errors

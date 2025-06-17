@@ -1,11 +1,20 @@
+import math  # For math.ceil in parameter estimation if needed
+
 import torch
 import torch.nn as nn
-import math  # For math.ceil in parameter estimation if needed
+
 
 class LLMConfig:
     """Holds the configuration for a toy LLM."""
 
-    def __init__(self, name: str, n_layers: int, hidden_size: int, n_heads: int, total_params_str: str):
+    def __init__(
+        self,
+        name: str,
+        n_layers: int,
+        hidden_size: int,
+        n_heads: int,
+        total_params_str: str,
+    ):
         self.name = name
         self.n_layers = n_layers
         self.hidden_size = hidden_size
@@ -13,27 +22,62 @@ class LLMConfig:
         self.total_params_str = total_params_str  # The approximate total parameters as a string (e.g., "~0.4M")
 
         if hidden_size % n_heads != 0:
-            raise ValueError(f"hidden_size ({hidden_size}) must be divisible by n_heads ({n_heads})")
+            raise ValueError(
+                f"hidden_size ({hidden_size}) must be divisible by n_heads ({n_heads})"
+            )
 
     def __repr__(self):
-        return (f"LLMConfig(name='{self.name}', n_layers={self.n_layers}, "
-                f"hidden_size={self.hidden_size}, n_heads={self.n_heads}, "
-                f"total_params_str='{self.total_params_str}')")
+        return (
+            f"LLMConfig(name='{self.name}', n_layers={self.n_layers}, "
+            f"hidden_size={self.hidden_size}, n_heads={self.n_heads}, "
+            f"total_params_str='{self.total_params_str}')"
+        )
 
 
 # List of configurations based on the provided table
 llm_configurations_data = [
-    {"name": "Tiny", "n_layers": 2, "hidden_size": 128, "n_heads": 2, "total_params_str": "~0.4M"},
-    {"name": "Small", "n_layers": 4, "hidden_size": 256, "n_heads": 4, "total_params_str": "~2M"},
-    {"name": "Base", "n_layers": 6, "hidden_size": 512, "n_heads": 8, "total_params_str": "~15M"},
-    {"name": "Medium", "n_layers": 8, "hidden_size": 768, "n_heads": 12, "total_params_str": "~50M"},
-    {"name": "Large", "n_layers": 12, "hidden_size": 1024, "n_heads": 16, "total_params_str": "~100M–150M"},
+    {
+        "name": "Tiny",
+        "n_layers": 2,
+        "hidden_size": 128,
+        "n_heads": 2,
+        "total_params_str": "~0.4M",
+    },
+    {
+        "name": "Small",
+        "n_layers": 4,
+        "hidden_size": 256,
+        "n_heads": 4,
+        "total_params_str": "~2M",
+    },
+    {
+        "name": "Base",
+        "n_layers": 6,
+        "hidden_size": 512,
+        "n_heads": 8,
+        "total_params_str": "~15M",
+    },
+    {
+        "name": "Medium",
+        "n_layers": 8,
+        "hidden_size": 768,
+        "n_heads": 12,
+        "total_params_str": "~50M",
+    },
+    {
+        "name": "Large",
+        "n_layers": 12,
+        "hidden_size": 1024,
+        "n_heads": 16,
+        "total_params_str": "~100M–150M",
+    },
 ]
 
 llm_configurations = [LLMConfig(**data) for data in llm_configurations_data]
 
 
 # --- Conceptual PyTorch-like Model Components ---
+
 
 class ToyMultiHeadAttention(nn.Module):
     """Conceptual Multi-Head Attention block."""
@@ -81,7 +125,9 @@ class ToyMultiHeadAttention(nn.Module):
 class ToyFeedForward(nn.Module):
     """Conceptual Feed-Forward Network (FFN) block."""
 
-    def __init__(self, hidden_size: int, ffn_hidden_size: int, dropout_rate: float = 0.1):
+    def __init__(
+        self, hidden_size: int, ffn_hidden_size: int, dropout_rate: float = 0.1
+    ):
         super().__init__()
         self.linear1 = nn.Linear(hidden_size, ffn_hidden_size)
         self.activation = nn.GELU()  # GELU is common, ReLU or SiLU are alternatives
@@ -99,7 +145,13 @@ class ToyFeedForward(nn.Module):
 class ToyTransformerBlock(nn.Module):
     """Conceptual Transformer Block."""
 
-    def __init__(self, hidden_size: int, n_heads: int, ffn_expansion_factor: int = 4, dropout_rate: float = 0.1):
+    def __init__(
+        self,
+        hidden_size: int,
+        n_heads: int,
+        ffn_expansion_factor: int = 4,
+        dropout_rate: float = 0.1,
+    ):
         super().__init__()
         self.norm1 = nn.LayerNorm(hidden_size)
         self.attention = ToyMultiHeadAttention(hidden_size, n_heads)
@@ -113,7 +165,9 @@ class ToyTransformerBlock(nn.Module):
     def forward(self, x, attention_mask=None):
         # Pre-LayerNorm architecture
         # Attention sub-layer
-        attn_output = self.attention(self.norm1(x), self.norm1(x), self.norm1(x), mask=attention_mask)
+        attn_output = self.attention(
+            self.norm1(x), self.norm1(x), self.norm1(x), mask=attention_mask
+        )
         x = x + self.dropout1(attn_output)  # Residual connection
 
         # Feed-forward sub-layer
@@ -125,8 +179,15 @@ class ToyTransformerBlock(nn.Module):
 class ToyLLM(nn.Module):
     """Conceptual Toy Language Model."""
 
-    def __init__(self, config: LLMConfig, vocab_size: int, max_seq_len: int,
-                 ffn_expansion_factor: int = 4, dropout_rate: float = 0.1, tie_weights: bool = True):
+    def __init__(
+        self,
+        config: LLMConfig,
+        vocab_size: int,
+        max_seq_len: int,
+        ffn_expansion_factor: int = 4,
+        dropout_rate: float = 0.1,
+        tie_weights: bool = True,
+    ):
         super().__init__()
         self.config = config
         self.vocab_size = vocab_size
@@ -138,14 +199,23 @@ class ToyLLM(nn.Module):
         self.emb_dropout = nn.Dropout(dropout_rate)
 
         # Transformer Blocks
-        self.layers = nn.ModuleList([
-            ToyTransformerBlock(config.hidden_size, config.n_heads, ffn_expansion_factor, dropout_rate)
-            for _ in range(config.n_layers)
-        ])
+        self.layers = nn.ModuleList(
+            [
+                ToyTransformerBlock(
+                    config.hidden_size,
+                    config.n_heads,
+                    ffn_expansion_factor,
+                    dropout_rate,
+                )
+                for _ in range(config.n_layers)
+            ]
+        )
 
         # Final LayerNorm and Output Head
         self.norm_out = nn.LayerNorm(config.hidden_size)
-        self.output_head = nn.Linear(config.hidden_size, vocab_size, bias=False)  # Bias often False for output head
+        self.output_head = nn.Linear(
+            config.hidden_size, vocab_size, bias=False
+        )  # Bias often False for output head
 
         # Weight tying (common practice)
         if tie_weights:
@@ -170,7 +240,11 @@ class ToyLLM(nn.Module):
         batch_size, seq_len = input_ids.shape
 
         # Create positional IDs
-        position_ids = torch.arange(0, seq_len, dtype=torch.long, device=input_ids.device).unsqueeze(0)  # (1, seq_len)
+        position_ids = torch.arange(
+            0, seq_len, dtype=torch.long, device=input_ids.device
+        ).unsqueeze(
+            0
+        )  # (1, seq_len)
 
         # Embeddings
         tok_emb = self.token_embedding(input_ids)  # (batch_size, seq_len, hidden_size)
@@ -180,13 +254,17 @@ class ToyLLM(nn.Module):
 
         # Pass through Transformer blocks
         for layer in self.layers:
-            x = layer(x, attention_mask=attention_mask)  # Assuming attention_mask is correctly shaped if provided
+            x = layer(
+                x, attention_mask=attention_mask
+            )  # Assuming attention_mask is correctly shaped if provided
 
         x = self.norm_out(x)
         logits = self.output_head(x)  # (batch_size, seq_len, vocab_size)
         return logits
 
-    def estimate_parameters(self, ffn_expansion_factor: int = 4, tie_weights: bool = True) -> int:
+    def estimate_parameters(
+        self, ffn_expansion_factor: int = 4, tie_weights: bool = True
+    ) -> int:
         """
         Estimates the number of parameters in the model based on its structure.
         This is a formula-based estimation for the conceptual model.
@@ -218,8 +296,8 @@ class ToyLLM(nn.Module):
         params_per_block += 4 * (h * h + h)
         # FFN
         ffn_h = h * ffn_expansion_factor
-        params_per_block += (h * ffn_h + ffn_h)  # linear1 + bias1
-        params_per_block += (ffn_h * h + h)  # linear2 + bias2
+        params_per_block += h * ffn_h + ffn_h  # linear1 + bias1
+        params_per_block += ffn_h * h + h  # linear2 + bias2
         # LayerNorms (2 per block, each with weight and bias)
         params_per_block += 2 * (2 * h)
 
@@ -262,12 +340,16 @@ if __name__ == "__main__":
     print(f"  Vocab Size: {example_vocab_size}")
     print(f"  Max Sequence Length: {example_max_seq_len}")
 
-    ffn_exp_factors_to_test = [2, 4,
-                               8 / 3]  # 8/3 is approx 2.66, often used in Llama-like models as (2/3 * 4) with SwiGLU
+    ffn_exp_factors_to_test = [
+        2,
+        4,
+        8 / 3,
+    ]  # 8/3 is approx 2.66, often used in Llama-like models as (2/3 * 4) with SwiGLU
 
     for ffn_factor in ffn_exp_factors_to_test:
-        actual_ffn_factor = math.ceil(ffn_factor) if isinstance(ffn_factor,
-                                                                float) else ffn_factor  # Ensure integer for layer dim
+        actual_ffn_factor = (
+            math.ceil(ffn_factor) if isinstance(ffn_factor, float) else ffn_factor
+        )  # Ensure integer for layer dim
         # For SwiGLU type FFNs, the actual hidden dim is often 2/3 of ffn_expansion_factor * hidden_size,
         # but involves 3 matrices instead of 2.
         # Here, ffn_expansion_factor directly multiplies hidden_size for the intermediate FFN layer.
@@ -277,16 +359,19 @@ if __name__ == "__main__":
             vocab_size=example_vocab_size,
             max_seq_len=example_max_seq_len,
             ffn_expansion_factor=actual_ffn_factor,  # Standard FFN expansion
-            tie_weights=True
+            tie_weights=True,
         )
 
         estimated_params = tiny_llm_model.estimate_parameters(
-            ffn_expansion_factor=actual_ffn_factor,
-            tie_weights=True
+            ffn_expansion_factor=actual_ffn_factor, tie_weights=True
         )
-        print(f"\n  With FFN Expansion Factor: {ffn_factor:.2f} (actual intermediate multiplier: {actual_ffn_factor})")
         print(
-            f"  Estimated Parameters for '{tiny_config.name}': {estimated_params:,} (approx {estimated_params / 1e6:.2f}M)")
+            f"\n  With FFN Expansion Factor: {ffn_factor:.2f} (actual intermediate multiplier: {actual_ffn_factor})"
+        )
+        print(
+            f"  Estimated Parameters for '{tiny_config.name}': "
+            f"{estimated_params:,} (approx {estimated_params / 1e6:.2f}M)"
+        )
         print(f"  Table's 'Total Params': {tiny_config.total_params_str}")
 
     print("-" * 30)
@@ -310,19 +395,14 @@ if __name__ == "__main__":
             vocab_size=toy_vocab_size,
             max_seq_len=toy_max_seq_len,
             ffn_expansion_factor=ffn_factor,
-            tie_weights=True
+            tie_weights=True,
         )
         estimated_params_small_toy = small_llm_model_toy.estimate_parameters(
-            ffn_expansion_factor=ffn_factor,
-            tie_weights=True
+            ffn_expansion_factor=ffn_factor, tie_weights=True
         )
         print(f"\n  With FFN Expansion Factor: {ffn_factor}")
         print(
-            f"  Estimated Parameters for '{small_config.name}' (toy settings): {estimated_params_small_toy:,} (approx {estimated_params_small_toy / 1e6:.2f}M)")
+            f"  Estimated Parameters for '{small_config.name}' "
+            f"(toy settings): {estimated_params_small_toy:,} (approx {estimated_params_small_toy / 1e6:.2f}M)"
+        )
         print(f"  Table's 'Total Params': {small_config.total_params_str}")
-        # If we only count core transformer block parameters (n_layers * (12 * h^2) for ffn_exp=4 or n_layers * (8 * h^2) for ffn_exp=2)
-        # this value would be much closer to the table.
-        # Small (core, ffn_exp=2): 4 layers * (8 * 256^2 + biases) ~ 2.1M
-        # Small (core, ffn_exp=4): 4 layers * (12 * 256^2 + biases) ~ 3.1M
-        # The table's ~2M for Small suggests an FFN expansion closer to 2 for core block parameters,
-        # or that the "Total Params" heavily focuses on block parameters.
