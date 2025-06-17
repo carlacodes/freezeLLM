@@ -7,9 +7,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from datasets import load_dataset
-from eval_metrics import evaluate_qa_metrics
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
+
+from llm_scale_up.utils.eval_metrics import evaluate_qa_metrics
 
 # need to modularise this later
 
