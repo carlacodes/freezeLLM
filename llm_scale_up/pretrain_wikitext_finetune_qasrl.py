@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from itertools import chain
 from typing import Iterator, List, Tuple
 
@@ -589,8 +590,11 @@ if __name__ == "__main__":
         f"Instantiated Base Model: {tiny_config.name} with {num_params:,} trainable parameters."
     )
 
-    RUN_PRETRAINING = False
-    PRETRAINED_MODEL_PATH = "models/toy_llm_unified_pretrained.pth"
+    RUN_PRETRAINING = True
+    date_now = time.strftime("%Y%m%d-%H%M%S")
+    NUM_FINETUNE_EPOCHS = 30
+    PRETRAINED_MODEL_PATH = f"models/date_{date_now}/toy_llm_unified_pretrained.pth"
+    FINETUNED_MODEL_PATH = f"models/date_{date_now}/toy_llm_qasrl_finetuned.pth"
 
     if RUN_PRETRAINING:
         print("\n--- Starting MLM Pre-training with Unified Vocab ---")
@@ -662,7 +666,6 @@ if __name__ == "__main__":
     )
 
     optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=5e-5)
-    NUM_FINETUNE_EPOCHS = 30
 
     print(f"Starting fine-tuning for {NUM_FINETUNE_EPOCHS} epochs...")
     for epoch in range(1, NUM_FINETUNE_EPOCHS + 1):
@@ -674,7 +677,6 @@ if __name__ == "__main__":
         )
 
     print("\nFine-tuning finished.")
-    FINETUNED_MODEL_PATH = "models/toy_llm_qasrl_finetuned.pth"
     torch.save(qa_model.state_dict(), FINETUNED_MODEL_PATH)
     print(f"Fine-tuned QA model state_dict saved to {FINETUNED_MODEL_PATH}")
 
