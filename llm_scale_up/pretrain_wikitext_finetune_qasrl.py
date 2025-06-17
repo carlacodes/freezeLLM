@@ -1,3 +1,4 @@
+import json
 import re
 from itertools import chain
 from typing import Iterator, List, Tuple
@@ -6,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from datasets import load_dataset
+from eval_metrics import evaluate_qa_metrics
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
 
@@ -562,7 +564,7 @@ if __name__ == "__main__":
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {DEVICE}")
 
-    # Build a single UNIFIED vocabulary from both datasets
+    # Build a single UNIFIED vocab from both datasets
     vocab = build_unified_vocab(min_freq=5)
     VOCAB_SIZE = len(vocab)
     PAD_TOKEN_ID = vocab[PAD_TOKEN]
@@ -611,7 +613,7 @@ if __name__ == "__main__":
 
         optimizer_pretrain = optim.AdamW(pretrain_model.parameters(), lr=1e-4)
         criterion_mlm = nn.CrossEntropyLoss(ignore_index=-100)
-        NUM_PRETRAIN_EPOCHS = 30
+        NUM_PRETRAIN_EPOCHS = 50
 
         for epoch in range(1, NUM_PRETRAIN_EPOCHS + 1):
             avg_epoch_loss = pretrain_epoch(
@@ -659,7 +661,7 @@ if __name__ == "__main__":
     )
 
     optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=5e-5)
-    NUM_FINETUNE_EPOCHS = 50
+    NUM_FINETUNE_EPOCHS = 30
 
     print(f"Starting fine-tuning for {NUM_FINETUNE_EPOCHS} epochs...")
     for epoch in range(1, NUM_FINETUNE_EPOCHS + 1):
@@ -674,3 +676,18 @@ if __name__ == "__main__":
     FINETUNED_MODEL_PATH = "models/toy_llm_qasrl_finetuned.pth"
     torch.save(qa_model.state_dict(), FINETUNED_MODEL_PATH)
     print(f"Fine-tuned QA model state_dict saved to {FINETUNED_MODEL_PATH}")
+
+    final_acc, final_f1 = evaluate_qa_metrics(qa_model, qa_train_dataloader, DEVICE)
+    print(f"Final Accuracy: {final_acc:.4f} | Final F1: {final_f1:.4f}")
+
+    stats = {
+        "pretrain_epochs": 0 if not RUN_PRETRAINING else NUM_PRETRAIN_EPOCHS,
+        "finetune_epochs": NUM_FINETUNE_EPOCHS,
+        "final_loss": avg_epoch_loss,
+        "final_accuracy": final_acc,
+        "final_f1": final_f1,
+    }
+
+    with open("models/finetune_stats.json", "w") as f:
+        json.dump(stats, f, indent=2)
+    print("Final training statistics saved to 'models/finetune_stats.json'")
