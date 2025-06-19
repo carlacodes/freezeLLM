@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import time
 from itertools import chain
@@ -595,6 +596,10 @@ if __name__ == "__main__":
     NUM_FINETUNE_EPOCHS = 30
     PRETRAINED_MODEL_PATH = f"models/date_{date_now}/toy_llm_unified_pretrained.pth"
     FINETUNED_MODEL_PATH = f"models/date_{date_now}/toy_llm_qasrl_finetuned.pth"
+
+    os.makedirs(os.path.dirname(PRETRAINED_MODEL_PATH), exist_ok=True)
+    os.makedirs(os.path.dirname(FINETUNED_MODEL_PATH), exist_ok=True)
+    print(f"Pre-trained model will be saved to created dir: {PRETRAINED_MODEL_PATH}")
 
     if RUN_PRETRAINING:
         print("\n--- Starting MLM Pre-training with Unified Vocab ---")
