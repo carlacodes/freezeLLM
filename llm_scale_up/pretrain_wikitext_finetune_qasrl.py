@@ -303,18 +303,21 @@ def build_vocab_from_iterator(iterator, min_freq, specials):
 
 
 def build_unified_vocab(min_freq=5):
-    """Builds a vocabulary from both wikitext-2 and qa_srl train splits."""
-    print("Building unified vocabulary from wikitext-2 and qa_srl...")
+    """Builds a vocabulary from both wikitext-2 and qa_srl train and validation splits."""
+    print(
+        "Building unified vocabulary from wikitext-2 and qa_srl (train + validation)..."
+    )
 
     wikitext_loader = WikiText2Dataset()
     wikitext_train_iter, _, _ = wikitext_loader()
     wikitext_tokens_iter = yield_tokens(wikitext_train_iter, TOKENIZER)
 
-    print("Loading qa_srl 'train' split for vocabulary building...")
-    qa_srl_dataset = load_dataset("qa_srl", split="train", trust_remote_code=True)
+    print("Loading qa_srl 'train' and 'validation' splits for vocabulary building...")
+    qa_srl_train = load_dataset("qa_srl", split="train", trust_remote_code=True)
+    qa_srl_val = load_dataset("qa_srl", split="validation", trust_remote_code=True)
 
     def qa_srl_token_iterator():
-        for example in qa_srl_dataset:
+        for example in chain(qa_srl_train, qa_srl_val):
             # Yield tokens from the sentence
             yield TOKENIZER(example["sentence"])
             # Yield tokens from the question
@@ -564,6 +567,10 @@ def finetune_qa_epoch(model, dataloader, optimizer, device, epoch_num, log_inter
 
 
 if __name__ == "__main__":
+    # Set these to True to skip steps
+    SKIP_PRETRAIN = True
+    SKIP_FINETUNE = True
+
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {DEVICE}")
 
@@ -591,7 +598,6 @@ if __name__ == "__main__":
         f"Instantiated Base Model: {tiny_config.name} with {num_params:,} trainable parameters."
     )
 
-    RUN_PRETRAINING = True
     date_now = time.strftime("%Y%m%d-%H%M%S")
     NUM_FINETUNE_EPOCHS = 30
     PRETRAINED_MODEL_PATH = f"models/date_{date_now}/toy_llm_unified_pretrained.pth"
@@ -601,7 +607,7 @@ if __name__ == "__main__":
     os.makedirs(os.path.dirname(FINETUNED_MODEL_PATH), exist_ok=True)
     print(f"Pre-trained model will be saved to created dir: {PRETRAINED_MODEL_PATH}")
 
-    if RUN_PRETRAINING:
+    if not SKIP_PRETRAIN:
         print("\n--- Starting MLM Pre-training with Unified Vocab ---")
         pretrain_model = ToyLLMForPretraining(base_llm).to(DEVICE)
 
@@ -646,56 +652,162 @@ if __name__ == "__main__":
             f"\nSkipping pre-training. Attempting to load model from: {PRETRAINED_MODEL_PATH}"
         )
 
-    print("\n--- Starting Fine-tuning on QA-SRL ---")
+    if not SKIP_FINETUNE:
+        print("\n--- Starting Fine-tuning on QA-SRL ---")
 
+        qa_model = ToyLLMForQuestionAnswering(base_llm).to(DEVICE)
+
+        try:
+            pretrained_dict = torch.load(PRETRAINED_MODEL_PATH, map_location=DEVICE)
+            qa_model.llm.load_state_dict(pretrained_dict)
+            print("Successfully loaded pre-trained weights into the QA model.")
+        except FileNotFoundError:
+            print(f"WARNING: Pre-trained model not found at {PRETRAINED_MODEL_PATH}.")
+            print("Fine-tuning will start from randomly initialized weights.")
+
+        BATCH_SIZE_QA = 8
+        qa_train_dataset = QASRLDataset(
+            split="train", tokenizer_fn=TOKENIZER, vocab=vocab, max_seq_len=MAX_SEQ_LEN
+        )
+        collate_fn_qa = lambda batch: collate_batch_qa(batch, PAD_TOKEN_ID)
+        qa_train_dataloader = DataLoader(
+            qa_train_dataset,
+            batch_size=BATCH_SIZE_QA,
+            shuffle=True,
+            collate_fn=collate_fn_qa,
+        )
+
+        optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=5e-5)
+
+        print(f"Starting fine-tuning for {NUM_FINETUNE_EPOCHS} epochs...")
+        for epoch in range(1, NUM_FINETUNE_EPOCHS + 1):
+            avg_epoch_loss = finetune_qa_epoch(
+                qa_model, qa_train_dataloader, optimizer_finetune, DEVICE, epoch
+            )
+            print(
+                f"--- End of Finetune Epoch {epoch} | Average QA Loss: {avg_epoch_loss:.4f} ---"
+            )
+
+        print("\nFine-tuning finished.")
+        torch.save(qa_model.state_dict(), FINETUNED_MODEL_PATH)
+        print(f"Fine-tuned QA model state_dict saved to {FINETUNED_MODEL_PATH}")
+
+        final_acc, final_f1 = evaluate_qa_metrics(qa_model, qa_train_dataloader, DEVICE)
+        print(f"Final Accuracy: {final_acc:.4f} | Final F1: {final_f1:.4f}")
+
+        stats = {
+            "pretrain_epochs": 0 if SKIP_PRETRAIN else NUM_PRETRAIN_EPOCHS,
+            "finetune_epochs": NUM_FINETUNE_EPOCHS,
+            "final_loss": avg_epoch_loss,
+            "final_accuracy": final_acc,
+            "final_f1": final_f1,
+        }
+
+        with open("models/finetune_stats.json", "w") as f:
+            json.dump(stats, f, indent=2)
+        print("Final training statistics saved to 'models/finetune_stats.json'")
+
+    else:
+        print("Skipping fine-tuning step.")
+
+    # Always run validation, regardless of SKIP_PRETRAIN or SKIP_FINETUNE
+    print("\n--- Running Validation Metrics on QA-SRL Validation Set ---")
     qa_model = ToyLLMForQuestionAnswering(base_llm).to(DEVICE)
-
     try:
-        pretrained_dict = torch.load(PRETRAINED_MODEL_PATH, map_location=DEVICE)
-        qa_model.llm.load_state_dict(pretrained_dict)
-        print("Successfully loaded pre-trained weights into the QA model.")
-    except FileNotFoundError:
-        print(f"WARNING: Pre-trained model not found at {PRETRAINED_MODEL_PATH}.")
-        print("Fine-tuning will start from randomly initialized weights.")
+        # Try to load finetuned weights first, else pretrained, else random
+        if os.path.exists(FINETUNED_MODEL_PATH):
+            qa_model.load_state_dict(
+                torch.load(FINETUNED_MODEL_PATH, map_location=DEVICE)
+            )
+            print(f"Loaded finetuned model from {FINETUNED_MODEL_PATH}")
+        elif os.path.exists(PRETRAINED_MODEL_PATH):
+            pretrained_dict = torch.load(PRETRAINED_MODEL_PATH, map_location=DEVICE)
+            qa_model.llm.load_state_dict(pretrained_dict)
+            print(f"Loaded pretrained model from {PRETRAINED_MODEL_PATH}")
+        else:
+            print(
+                "No trained weights found. Using randomly initialized model for validation."
+            )
+    except Exception as e:
+        print(
+            f"Error loading model weights: {e}\nUsing randomly initialized model for validation."
+        )
 
     BATCH_SIZE_QA = 8
-    qa_train_dataset = QASRLDataset(
-        split="train", tokenizer_fn=TOKENIZER, vocab=vocab, max_seq_len=MAX_SEQ_LEN
+    qa_val_dataset = QASRLDataset(
+        split="validation", tokenizer_fn=TOKENIZER, vocab=vocab, max_seq_len=MAX_SEQ_LEN
     )
     collate_fn_qa = lambda batch: collate_batch_qa(batch, PAD_TOKEN_ID)
-    qa_train_dataloader = DataLoader(
-        qa_train_dataset,
+    qa_val_dataloader = DataLoader(
+        qa_val_dataset,
         batch_size=BATCH_SIZE_QA,
-        shuffle=True,
+        shuffle=False,
         collate_fn=collate_fn_qa,
     )
 
-    optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=5e-5)
-
-    print(f"Starting fine-tuning for {NUM_FINETUNE_EPOCHS} epochs...")
-    for epoch in range(1, NUM_FINETUNE_EPOCHS + 1):
-        avg_epoch_loss = finetune_qa_epoch(
-            qa_model, qa_train_dataloader, optimizer_finetune, DEVICE, epoch
+    final_acc, final_f1 = evaluate_qa_metrics(qa_model, qa_val_dataloader, DEVICE)
+    print(
+        f"Final Validation Accuracy: {final_acc:.4f} | Final Validation F1: {final_f1:.4f}"
+    )
+    with open("models/validation_stats.json", "w") as f:
+        json.dump(
+            {
+                "final_validation_accuracy": final_acc,
+                "final_validation_f1": final_f1,
+            },
+            f,
+            indent=2,
         )
-        print(
-            f"--- End of Finetune Epoch {epoch} | Average QA Loss: {avg_epoch_loss:.4f} ---"
-        )
 
-    print("\nFine-tuning finished.")
-    torch.save(qa_model.state_dict(), FINETUNED_MODEL_PATH)
-    print(f"Fine-tuned QA model state_dict saved to {FINETUNED_MODEL_PATH}")
+    # Print out an example train and validation example at the end
+    print("\nExample from QA-SRL train set:")
+    qa_train_dataset = QASRLDataset(
+        split="train", tokenizer_fn=TOKENIZER, vocab=vocab, max_seq_len=MAX_SEQ_LEN
+    )
 
-    final_acc, final_f1 = evaluate_qa_metrics(qa_model, qa_train_dataloader, DEVICE)
-    print(f"Final Accuracy: {final_acc:.4f} | Final F1: {final_f1:.4f}")
+    def decode_input_ids(input_ids, vocab):
+        idx_to_token = vocab.index_to_token
+        if hasattr(input_ids, "tolist"):
+            input_ids = input_ids.tolist()
+        return [idx_to_token[idx] for idx in input_ids]
 
-    stats = {
-        "pretrain_epochs": 0 if not RUN_PRETRAINING else NUM_PRETRAIN_EPOCHS,
-        "finetune_epochs": NUM_FINETUNE_EPOCHS,
-        "final_loss": avg_epoch_loss,
-        "final_accuracy": final_acc,
-        "final_f1": final_f1,
-    }
+    if len(qa_train_dataset) > 0:
+        train_ex = qa_train_dataset[0]
+        print(train_ex)
+        train_tokens = decode_input_ids(train_ex["input_ids"], vocab)
+        if "<sep>" in train_tokens:
+            sep_idx = train_tokens.index("<sep>")
+            question_tokens = train_tokens[1:sep_idx]  # skip <bos>
+            context_tokens = train_tokens[sep_idx + 1 : -1]  # skip <eos>
+            print("Train question:", " ".join(question_tokens))
+            print("Train context:", " ".join(context_tokens))
+            # Print answer span
+            start = train_ex["start_position"].item()
+            end = train_ex["end_position"].item()
+            answer_tokens = train_tokens[start : end + 1]
+            print("Train answer:", " ".join(answer_tokens))
+        else:
+            print("Could not find <sep> token in train input_ids.")
+    else:
+        print("No examples in train set.")
 
-    with open("models/finetune_stats.json", "w") as f:
-        json.dump(stats, f, indent=2)
-    print("Final training statistics saved to 'models/finetune_stats.json'")
+    print("\nExample from QA-SRL validation set:")
+    if len(qa_val_dataset) > 0:
+        val_ex = qa_val_dataset[0]
+        print(val_ex)
+        val_tokens = decode_input_ids(val_ex["input_ids"], vocab)
+        if "<sep>" in val_tokens:
+            sep_idx = val_tokens.index("<sep>")
+            question_tokens = val_tokens[1:sep_idx]
+            context_tokens = val_tokens[sep_idx + 1 : -1]
+            print("Validation question:", " ".join(question_tokens))
+            print("Validation context:", " ".join(context_tokens))
+            # Print answer span
+            start = val_ex["start_position"].item()
+            end = val_ex["end_position"].item()
+            answer_tokens = val_tokens[start : end + 1]
+            print("Validation answer:", " ".join(answer_tokens))
+        else:
+            print("Could not find <sep> token in validation input_ids.")
+    else:
+        print("No examples in validation set.")
