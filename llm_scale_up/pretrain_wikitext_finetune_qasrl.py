@@ -302,7 +302,7 @@ def build_vocab_from_iterator(iterator, min_freq, specials):
     return Vocab(token_to_index, specials)
 
 
-def build_unified_vocab(min_freq=5):
+def build_unified_vocab(min_freq=1):
     """Builds a vocabulary from both wikitext-2 and qa_srl train and validation splits."""
     print(
         "Building unified vocabulary from wikitext-2 and qa_srl (train + validation)..."
@@ -568,8 +568,8 @@ def finetune_qa_epoch(model, dataloader, optimizer, device, epoch_num, log_inter
 
 if __name__ == "__main__":
     # Set these to True to skip steps
-    SKIP_PRETRAIN = True
-    SKIP_FINETUNE = True
+    SKIP_PRETRAIN = False
+    SKIP_FINETUNE = False
 
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {DEVICE}")
