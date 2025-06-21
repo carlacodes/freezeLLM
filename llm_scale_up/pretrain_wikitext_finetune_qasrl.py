@@ -575,7 +575,7 @@ if __name__ == "__main__":
     print(f"Using device: {DEVICE}")
 
     # Build a single UNIFIED vocab from both datasets
-    vocab = build_unified_vocab(min_freq=5)
+    vocab = build_unified_vocab(min_freq=1)
     VOCAB_SIZE = len(vocab)
     PAD_TOKEN_ID = vocab[PAD_TOKEN]
     print(f"Unified vocabulary size: {VOCAB_SIZE}")
