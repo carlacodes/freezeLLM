@@ -599,7 +599,7 @@ if __name__ == "__main__":
     )
 
     date_now = time.strftime("%Y%m%d-%H%M%S")
-    NUM_FINETUNE_EPOCHS = 30
+    NUM_FINETUNE_EPOCHS = 3
     PRETRAINED_MODEL_PATH = f"models/date_{date_now}/toy_llm_unified_pretrained.pth"
     FINETUNED_MODEL_PATH = f"models/date_{date_now}/toy_llm_qasrl_finetuned.pth"
 
