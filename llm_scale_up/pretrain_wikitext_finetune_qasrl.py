@@ -470,44 +470,71 @@ class QASRLDataset(Dataset):
         self.processed_data = self._preprocess()
 
     def _preprocess(self):
+        """
+        Preprocesses the dataset by tokenizing, combining question and context,
+        truncating, and correctly identifying answer spans within the final input.
+        """
         processed = []
         for example in self.dataset:
             context = example["sentence"]
-            context_tokens = self.tokenizer_fn(context)
-
             question = " ".join(
                 [token for token in example["question"] if token != "_"]
             )
+
+            # Tokenize question and context into lists of string tokens
             question_tokens = self.tokenizer_fn(question)
+            context_tokens = self.tokenizer_fn(context)
 
-            input_tokens = (
-                [self.vocab[t] for t in question_tokens]
-                + [self.sep_id]
-                + [self.vocab[t] for t in context_tokens]
-            )
-            input_ids = (
-                [self.bos_id] + input_tokens[: self.max_seq_len - 2] + [self.eos_id]
-            )
+            # Process each answer provided for the example
+            for answer_text in example["answers"]:
+                answer_tokens = self.tokenizer_fn(answer_text)
 
-            for answer in example["answers"]:
-                answer_tokens = self.tokenizer_fn(answer)
-                context_offset = len(question_tokens) + 1
-                answer_ids = [self.vocab[t] for t in answer_tokens]
-                context_ids = [self.vocab[t] for t in context_tokens]
+                # 1. Combine question and context tokens with the separator
+                # We work with string tokens first to correctly find the answer span after truncation.
+                combined_tokens = question_tokens + [SEP_TOKEN] + context_tokens
 
-                start_pos, end_pos = 0, 0
-                for i in range(len(context_ids) - len(answer_ids) + 1):
-                    if context_ids[i : i + len(answer_ids)] == answer_ids:
-                        start_pos = context_offset + i + 1
-                        end_pos = start_pos + len(answer_ids) - 1
+                # 2. Truncate the combined list of tokens to fit within the model's max sequence length
+                # We reserve 2 spots for [BOS] and [EOS] tokens.
+                truncated_tokens = combined_tokens[: self.max_seq_len - 2]
+
+                # 3. Find the start and end of the answer *within the truncated token list*
+                answer_start_index = -1
+                # Search for the sublist of answer tokens within the truncated context part
+                for i in range(len(truncated_tokens) - len(answer_tokens) + 1):
+                    if truncated_tokens[i : i + len(answer_tokens)] == answer_tokens:
+                        answer_start_index = i
                         break
 
-                if start_pos > 0 and end_pos < len(input_ids) - 1:
+                # If the full answer was not found in the truncated sequence, this example is invalid.
+                if answer_start_index == -1:
+                    continue
+
+                # 4. If the answer is found, calculate final start/end positions and create tensors
+                # The final positions must be shifted by 1 to account for the [BOS] token.
+                final_start_pos = answer_start_index + 1
+                final_end_pos = final_start_pos + len(answer_tokens) - 1
+
+                # Convert all string tokens to their integer IDs from the vocabulary
+                input_ids_list = [self.vocab[token] for token in truncated_tokens]
+
+                # Add special tokens and convert to a tensor
+                final_input_ids = torch.tensor(
+                    [self.bos_id] + input_ids_list + [self.eos_id], dtype=torch.long
+                )
+
+                # Final sanity check: ensure the end position is within the sequence bounds
+                if (
+                    final_end_pos < len(final_input_ids) - 1
+                ):  # -1 to exclude the final [EOS] token
                     processed.append(
                         {
-                            "input_ids": torch.tensor(input_ids, dtype=torch.long),
-                            "start_position": torch.tensor(start_pos, dtype=torch.long),
-                            "end_position": torch.tensor(end_pos, dtype=torch.long),
+                            "input_ids": final_input_ids,
+                            "start_position": torch.tensor(
+                                final_start_pos, dtype=torch.long
+                            ),
+                            "end_position": torch.tensor(
+                                final_end_pos, dtype=torch.long
+                            ),
                         }
                     )
 
