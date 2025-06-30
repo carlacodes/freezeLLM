@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.optim as optim
 from datasets import load_dataset
 from torch.nn.utils.rnn import pad_sequence
+from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader, Dataset
 
 from llm_scale_up.utils.eval_metrics import evaluate_qa_metrics
@@ -628,6 +629,7 @@ if __name__ == "__main__":
         )
 
         optimizer_pretrain = optim.AdamW(pretrain_model.parameters(), lr=1e-4)
+        scheduler_pretrain = StepLR(optimizer_pretrain, step_size=10, gamma=0.5)
         criterion_mlm = nn.CrossEntropyLoss(ignore_index=-100)
         NUM_PRETRAIN_EPOCHS = 50
 
@@ -641,8 +643,10 @@ if __name__ == "__main__":
                 epoch,
                 log_interval=500,
             )
+            scheduler_pretrain.step()
             print(
-                f"--- End of Pre-train Epoch {epoch} | Average Loss: {avg_epoch_loss:.4f} ---"
+                f"--- End of Pre-train Epoch {epoch} | Average Loss: {avg_epoch_loss:.4f} | "
+                f"LR: {scheduler_pretrain.get_last_lr()[0]:.6f} ---"
             )
 
         torch.save(pretrain_model.llm.state_dict(), PRETRAINED_MODEL_PATH)
@@ -678,14 +682,17 @@ if __name__ == "__main__":
         )
 
         optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=5e-5)
+        scheduler_finetune = StepLR(optimizer_finetune, step_size=10, gamma=0.5)
 
         print(f"Starting fine-tuning for {NUM_FINETUNE_EPOCHS} epochs...")
         for epoch in range(1, NUM_FINETUNE_EPOCHS + 1):
             avg_epoch_loss = finetune_qa_epoch(
                 qa_model, qa_train_dataloader, optimizer_finetune, DEVICE, epoch
             )
+            scheduler_finetune.step()
             print(
-                f"--- End of Finetune Epoch {epoch} | Average QA Loss: {avg_epoch_loss:.4f} ---"
+                f"--- End of Finetune Epoch {epoch} | Average QA Loss: {avg_epoch_loss:.4f} "
+                f"| LR: {scheduler_finetune.get_last_lr()[0]:.6f} ---"
             )
 
         print("\nFine-tuning finished.")
