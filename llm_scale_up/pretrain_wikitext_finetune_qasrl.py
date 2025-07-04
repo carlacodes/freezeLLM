@@ -700,9 +700,53 @@ if __name__ == "__main__":
                 f"--- End of Pre-train Epoch {epoch} | Average Loss: {avg_epoch_loss:.4f} | "
                 f"LR: {scheduler_pretrain.get_last_lr()[0]:.6f} ---"
             )
+        # Save the pretrained model
+        torch.save(pretrain_model.state_dict(), PRETRAINED_MODEL_PATH)
 
-        torch.save(pretrain_model.llm.state_dict(), PRETRAINED_MODEL_PATH)
-        print(f"Pre-trained base model state_dict saved to {PRETRAINED_MODEL_PATH}")
+        # --- Freeze model parameters after pretraining ---
+        for param in pretrain_model.parameters():
+            param.requires_grad = False
+        pretrain_model.eval()
+        print("Model parameters frozen after pretraining.")
+
+        # --- Simple prompt completion test ---
+        def simple_generate(
+            model, prompt, vocab, tokenizer_fn, max_len=20, device=DEVICE
+        ):
+            # Use vocab.index_to_token for index-to-token mapping
+            inv_vocab = vocab.index_to_token
+            # Use vocab[token] for lookup, fallback to vocab.unk_index if not found
+            tokens = [
+                vocab[token] if token in vocab.token_to_index else vocab.unk_index
+                for token in tokenizer_fn(prompt)
+            ]
+            input_ids = torch.tensor(tokens, dtype=torch.long, device=device).unsqueeze(
+                0
+            )
+            attention_mask = (input_ids != vocab["<pad>"]).long()
+            for _ in range(max_len):
+                with torch.no_grad():
+                    logits = model(input_ids, attention_mask=attention_mask)
+                    if hasattr(model, "lm_head"):
+                        logits = model.lm_head(logits)
+                    next_token_logits = logits[0, -1, :]
+                    next_token_id = torch.argmax(next_token_logits).item()
+                if next_token_id == vocab["<eos>"] or next_token_id == vocab["<pad>"]:
+                    break
+                input_ids = torch.cat(
+                    [input_ids, torch.tensor([[next_token_id]], device=device)], dim=1
+                )
+                attention_mask = (input_ids != vocab["<pad>"]).long()
+            output_tokens = input_ids[0].tolist()
+            return " ".join([inv_vocab.get(t, "<unk>") for t in output_tokens])
+
+        test_prompt = "The capital of France is"
+        print("\nTesting prompt completion after pretraining:")
+        print(f"Prompt: '{test_prompt}'")
+        completion = simple_generate(
+            pretrain_model, test_prompt, vocab, TOKENIZER, max_len=10, device=DEVICE
+        )
+        print(f"Model completion: {completion}")
     else:
         print(
             f"\nSkipping pre-training. Attempting to load model from: {PRETRAINED_MODEL_PATH}"
