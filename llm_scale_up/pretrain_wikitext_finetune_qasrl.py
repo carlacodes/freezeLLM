@@ -58,15 +58,22 @@ class ToyMultiHeadAttention(nn.Module):
         self.v_proj = nn.Linear(hidden_size, hidden_size)
         self.out_proj = nn.Linear(hidden_size, hidden_size)
 
-    def forward(self, q, k, v, attention_mask=None):
+    def forward(self, q, k, v, attention_mask=None, is_causal=False):
         B, T, C = q.shape
         q_h = self.q_proj(q).view(B, T, self.n_heads, self.head_dim).transpose(1, 2)
         k_h = self.k_proj(k).view(B, T, self.n_heads, self.head_dim).transpose(1, 2)
         v_h = self.v_proj(v).view(B, T, self.n_heads, self.head_dim).transpose(1, 2)
 
         att_scores = (q_h @ k_h.transpose(-2, -1)) * (self.head_dim**-0.5)
+
+        # Apply causal mask if requested
+        if is_causal:
+            causal_mask = torch.triu(torch.ones_like(att_scores), diagonal=1).bool()
+            att_scores = att_scores.masked_fill(causal_mask, float("-inf"))
+
         if attention_mask is not None:
             if attention_mask.dim() == 2:
+                # This unsqueeze is for the padding mask
                 attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
             att_scores = att_scores.masked_fill(attention_mask == 0, float("-inf"))
 
@@ -106,10 +113,14 @@ class ToyTransformerBlock(nn.Module):
         self.ffn = ToyFeedForward(hidden_size, ffn_hidden_size, dropout_rate)
         self.dropout2 = nn.Dropout(dropout_rate)
 
-    def forward(self, x, attention_mask=None):
+    def forward(self, x, attention_mask=None, is_causal=False):
         normed_x = self.norm1(x)
         attn_output = self.attention(
-            normed_x, normed_x, normed_x, attention_mask=attention_mask
+            normed_x,
+            normed_x,
+            normed_x,
+            attention_mask=attention_mask,
+            is_causal=is_causal,
         )
         x = x + self.dropout1(attn_output)
         ffn_output = self.ffn(self.norm2(x))
@@ -167,7 +178,7 @@ class ToyLLM(nn.Module):
                     temp_weight[padding_idx].fill_(0)
             module.weight.data = temp_weight
 
-    def forward(self, input_ids, attention_mask=None):
+    def forward(self, input_ids, attention_mask=None, is_causal=False):
         batch_size, seq_len = input_ids.shape
         if seq_len > self.max_seq_len:
             input_ids = input_ids[:, : self.max_seq_len]
@@ -185,7 +196,7 @@ class ToyLLM(nn.Module):
         x = self.emb_dropout(tok_emb + pos_emb)
 
         for layer in self.layers:
-            x = layer(x, attention_mask=attention_mask)
+            x = layer(x, attention_mask=attention_mask, is_causal=is_causal)
 
         sequence_output = self.norm_out(x)
         return sequence_output
@@ -206,7 +217,10 @@ class ToyLLMForQuestionAnswering(nn.Module):
         start_positions=None,
         end_positions=None,
     ):
-        sequence_output = self.llm(input_ids, attention_mask=attention_mask)
+        # QA fine-tuning is bidirectional over the context, so is_causal=False
+        sequence_output = self.llm(
+            input_ids, attention_mask=attention_mask, is_causal=False
+        )
         logits = self.qa_outputs(sequence_output)
         start_logits, end_logits = logits.split(1, dim=-1)
         start_logits = start_logits.squeeze(-1)
@@ -225,18 +239,18 @@ class ToyLLMForQuestionAnswering(nn.Module):
 
 
 class ToyLLMForPretraining(nn.Module):
-    """Wrapper for the pre-training phase, includes the MLM head."""
+    """Wrapper for the pre-training phase, includes the Language Model head."""
 
     def __init__(self, base_model: ToyLLM):
         super().__init__()
         self.llm = base_model
-        self.mlm_output_head = nn.Linear(
-            self.llm.config.hidden_size, self.llm.vocab_size
-        )
+        self.lm_head = nn.Linear(self.llm.config.hidden_size, self.llm.vocab_size)
 
-    def forward(self, input_ids, attention_mask=None):
-        sequence_output = self.llm(input_ids, attention_mask=attention_mask)
-        logits = self.mlm_output_head(sequence_output)
+    def forward(self, input_ids, attention_mask=None, is_causal=False):
+        sequence_output = self.llm(
+            input_ids, attention_mask=attention_mask, is_causal=is_causal
+        )
+        logits = self.lm_head(sequence_output)
         return logits
 
 
@@ -319,19 +333,15 @@ def build_unified_vocab(min_freq=1):
 
     def qa_srl_token_iterator():
         for example in chain(qa_srl_train, qa_srl_val):
-            # Yield tokens from the sentence
             yield TOKENIZER(example["sentence"])
-            # Yield tokens from the question
             if "question" in example:
                 if isinstance(example["question"], list):
-                    # Join the question tokens if they're in a list
                     yield TOKENIZER(" ".join(example["question"]))
                 else:
                     yield TOKENIZER(example["question"])
 
     qa_srl_tokens_iter = qa_srl_token_iterator()
 
-    # Chain the iterators together
     combined_iterator = chain(wikitext_tokens_iter, qa_srl_tokens_iter)
 
     vocab = build_vocab_from_iterator(
@@ -343,26 +353,20 @@ def build_unified_vocab(min_freq=1):
     return vocab
 
 
-def create_mlm_inputs_and_labels(token_ids, vocab, mlm_probability=0.15):
-    mask_token_id = vocab[MASK_TOKEN]
-    pad_token_id = vocab[PAD_TOKEN]
-    inputs = token_ids.clone()
-    labels = token_ids.clone()
-    prob_matrix = torch.full(labels.shape, mlm_probability)
-    special_tokens_mask = (
-        (labels == pad_token_id)
-        | (labels == vocab[BOS_TOKEN])
-        | (labels == vocab[EOS_TOKEN])
-        | (labels == mask_token_id)
-    )
-    prob_matrix.masked_fill_(special_tokens_mask, value=0.0)
-    masked_indices = torch.bernoulli(prob_matrix).bool()
-    inputs[masked_indices] = mask_token_id
-    labels[~masked_indices] = -100
+def create_clm_inputs_and_labels(token_ids, pad_token_id):
+    """Creates inputs and labels for Causal Language Modeling."""
+    # Input is the sequence, except for the last token
+    inputs = token_ids[:, :-1].contiguous()
+    # Labels are the sequence, shifted one to the left
+    labels = token_ids[:, 1:].contiguous()
+
+    # Mask out pad tokens in labels
+    labels[labels == pad_token_id] = -100
     return inputs, labels
 
 
-def collate_batch_mlm(batch, vocab, tokenizer_fn, max_seq_len, device):
+def collate_batch_clm(batch, vocab, tokenizer_fn, max_seq_len, device):
+    """Collates a batch of text for Causal Language Modeling."""
     bos_token_id, eos_token_id, pad_token_id = (
         vocab[BOS_TOKEN],
         vocab[EOS_TOKEN],
@@ -378,16 +382,29 @@ def collate_batch_mlm(batch, vocab, tokenizer_fn, max_seq_len, device):
             + [eos_token_id]
         )
         processed_texts.append(torch.tensor(tokens, dtype=torch.long))
+
     if not processed_texts:
         return None, None, None
+
+    # Pad sequences to the max length in the batch
     padded_sequences = pad_sequence(
         [p[:max_seq_len] for p in processed_texts],
         batch_first=True,
         padding_value=pad_token_id,
     )
-    attention_masks = (padded_sequences != pad_token_id).long()
-    mlm_inputs, mlm_labels = create_mlm_inputs_and_labels(padded_sequences, vocab)
-    return mlm_inputs.to(device), mlm_labels.to(device), attention_masks.to(device)
+
+    clm_inputs, clm_labels = create_clm_inputs_and_labels(
+        padded_sequences, pad_token_id
+    )
+
+    # Attention mask should correspond to the inputs
+    attention_mask = (clm_inputs != pad_token_id).long()
+
+    return (
+        clm_inputs.to(device),
+        clm_labels.to(device),
+        attention_mask.to(device),
+    )
 
 
 def pretrain_epoch(
@@ -396,13 +413,16 @@ def pretrain_epoch(
     model.train()
     total_loss = 0
     num_batches = 0
-    for batch_idx, (mlm_inputs, mlm_labels, attention_masks) in enumerate(dataloader):
-        if mlm_inputs is None:
+    for batch_idx, (clm_inputs, clm_labels, attention_masks) in enumerate(dataloader):
+        if clm_inputs is None:
             continue
         optimizer.zero_grad()
-        output_logits = model(mlm_inputs, attention_mask=attention_masks)
+        # Enable causal masking for pre-training
+        output_logits = model(
+            clm_inputs, attention_mask=attention_masks, is_causal=True
+        )
         loss = criterion(
-            output_logits.view(-1, model.llm.vocab_size), mlm_labels.view(-1)
+            output_logits.view(-1, model.llm.vocab_size), clm_labels.view(-1)
         )
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
@@ -470,11 +490,6 @@ class QASRLDataset(Dataset):
         self.processed_data = self._preprocess()
 
     def _tokenize_with_offsets(self, text: str):
-        """
-        A helper function that tokenizes text and returns tokens along with their
-        start and end character offsets.
-        """
-        # The regex pattern must match the one used by the main tokenizer
         tokens = []
         offsets = []
         for match in re.finditer(r"\b\w+\b|[^\w\s]", text.lower()):
@@ -483,74 +498,46 @@ class QASRLDataset(Dataset):
         return tokens, offsets
 
     def _preprocess(self):
-        """
-        Refactored preprocessing method.
-        It maps answer character spans to token spans for robust position finding.
-        """
         processed = []
         for example in self.dataset:
             context = example["sentence"]
             question = " ".join(
                 [token for token in example["question"] if token != "_"]
             )
-
-            # 1. Tokenize question and context (with offsets for the context)
             question_tokens = self.tokenizer_fn(question)
             context_tokens, context_offsets = self._tokenize_with_offsets(context)
 
-            # 2. Iterate through each possible answer for the example
             for answer_text in example["answers"]:
-                # 3. Find the answer's character start position in the original context
                 char_start = context.lower().find(answer_text.lower())
                 if char_start == -1:
-                    continue  # Answer not found in context, skip
+                    continue
 
                 char_end = char_start + len(answer_text)
-
-                # 4. Map character span to token span
-                token_start_idx = -1
-                token_end_idx = -1
+                token_start_idx, token_end_idx = -1, -1
 
                 for i, (start_offset, end_offset) in enumerate(context_offsets):
-                    if start_offset >= char_start:
+                    if start_offset >= char_start and token_start_idx == -1:
                         token_start_idx = i
-                        break
-
-                for i, (start_offset, end_offset) in enumerate(context_offsets):
-                    if end_offset >= char_end:
+                    if end_offset >= char_end and token_end_idx == -1:
                         token_end_idx = i
-                        break
 
-                # If span is invalid or not found, skip this answer
                 if token_start_idx == -1 or token_end_idx == -1:
                     continue
 
-                # 5. Construct the full input sequence of tokens
-                # [BOS] question <sep> context [EOS]
                 question_len = len(question_tokens)
-
-                # Calculate final start/end positions relative to the combined sequence
-                # These positions account for [question, <sep>] before the context
                 final_token_start = question_len + 1 + token_start_idx
                 final_token_end = question_len + 1 + token_end_idx
 
-                # 6. Check for truncation
-                # The total length is question + sep + context. We need space for BOS & EOS.
                 if final_token_end >= self.max_seq_len - 2:
-                    continue  # The answer is outside the model's max length, so we discard it
+                    continue
 
-                # 7. Create final token IDs and positions
                 combined_tokens = question_tokens + ["<sep>"] + context_tokens
                 truncated_tokens = combined_tokens[: self.max_seq_len - 2]
-
                 input_ids_list = [self.vocab[token] for token in truncated_tokens]
-
-                # Add special tokens and convert to a tensor
                 final_input_ids = torch.tensor(
                     [self.bos_id] + input_ids_list + [self.eos_id], dtype=torch.long
                 )
 
-                # Final positions are shifted by 1 to account for the [BOS] token
                 processed.append(
                     {
                         "input_ids": final_input_ids,
@@ -620,14 +607,12 @@ def finetune_qa_epoch(model, dataloader, optimizer, device, epoch_num, log_inter
 
 
 if __name__ == "__main__":
-    # Set these to True to skip steps
     SKIP_PRETRAIN = False
     SKIP_FINETUNE = False
 
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {DEVICE}")
 
-    # Build a single UNIFIED vocab from both datasets
     vocab = build_unified_vocab(min_freq=1)
     VOCAB_SIZE = len(vocab)
     PAD_TOKEN_ID = vocab[PAD_TOKEN]
@@ -661,36 +646,35 @@ if __name__ == "__main__":
     print(f"Pre-trained model will be saved to created dir: {PRETRAINED_MODEL_PATH}")
 
     if not SKIP_PRETRAIN:
-        print("\n--- Starting MLM Pre-training with Unified Vocab ---")
+        print("\n--- Starting CLM Pre-training with Unified Vocab ---")
         pretrain_model = ToyLLMForPretraining(base_llm).to(DEVICE)
 
-        # We only pre-train on wikitext-2, but with the full, combined vocabulary
         dataset_loader_main = WikiText2Dataset()
         train_iter_raw, _, _ = dataset_loader_main()
         train_data_list = [line for line in train_iter_raw if line.strip()]
 
         BATCH_SIZE_PRETRAIN = 16
-        collate_fn_mlm = lambda batch: collate_batch_mlm(
+        collate_fn_clm = lambda batch: collate_batch_clm(
             batch, vocab, TOKENIZER, MAX_SEQ_LEN, DEVICE
         )
-        train_dataloader_mlm = DataLoader(
+        train_dataloader_clm = DataLoader(
             train_data_list,
             batch_size=BATCH_SIZE_PRETRAIN,
             shuffle=True,
-            collate_fn=collate_fn_mlm,
+            collate_fn=collate_fn_clm,
         )
 
         optimizer_pretrain = optim.AdamW(pretrain_model.parameters(), lr=1e-4)
         scheduler_pretrain = StepLR(optimizer_pretrain, step_size=10, gamma=0.5)
-        criterion_mlm = nn.CrossEntropyLoss(ignore_index=-100)
+        criterion_clm = nn.CrossEntropyLoss(ignore_index=-100)
         NUM_PRETRAIN_EPOCHS = 50
 
         for epoch in range(1, NUM_PRETRAIN_EPOCHS + 1):
             avg_epoch_loss = pretrain_epoch(
                 pretrain_model,
-                train_dataloader_mlm,
+                train_dataloader_clm,
                 optimizer_pretrain,
-                criterion_mlm,
+                criterion_clm,
                 DEVICE,
                 epoch,
                 log_interval=500,
@@ -700,22 +684,13 @@ if __name__ == "__main__":
                 f"--- End of Pre-train Epoch {epoch} | Average Loss: {avg_epoch_loss:.4f} | "
                 f"LR: {scheduler_pretrain.get_last_lr()[0]:.6f} ---"
             )
-        # Save the pretrained model
         torch.save(pretrain_model.state_dict(), PRETRAINED_MODEL_PATH)
 
-        # --- Freeze model parameters after pretraining ---
-        for param in pretrain_model.parameters():
-            param.requires_grad = False
-        pretrain_model.eval()
-        print("Model parameters frozen after pretraining.")
-
-        # --- Simple prompt completion test ---
         def simple_generate(
-            model, prompt, vocab, tokenizer_fn, max_len=20, device=DEVICE
+            model, prompt, vocab, tokenizer_fn, max_len=20, top_p=0.9, device=DEVICE
         ):
-            # Use vocab.index_to_token for index-to-token mapping
+            model.eval()
             inv_vocab = vocab.index_to_token
-            # Use vocab[token] for lookup, fallback to vocab.unk_index if not found
             tokens = [
                 vocab[token] if token in vocab.token_to_index else vocab.unk_index
                 for token in tokenizer_fn(prompt)
@@ -723,20 +698,40 @@ if __name__ == "__main__":
             input_ids = torch.tensor(tokens, dtype=torch.long, device=device).unsqueeze(
                 0
             )
-            attention_mask = (input_ids != vocab["<pad>"]).long()
+
             for _ in range(max_len):
+                attention_mask = (input_ids != vocab[PAD_TOKEN]).long()
                 with torch.no_grad():
-                    logits = model(input_ids, attention_mask=attention_mask)
-                    if hasattr(model, "lm_head"):
-                        logits = model.lm_head(logits)
-                    next_token_logits = logits[0, -1, :]
-                    next_token_id = torch.argmax(next_token_logits).item()
-                if next_token_id == vocab["<eos>"] or next_token_id == vocab["<pad>"]:
+                    # Set is_causal=True for generation
+                    logits = model(
+                        input_ids, attention_mask=attention_mask, is_causal=True
+                    )
+
+                next_token_logits = logits[0, -1, :]
+
+                # Apply nucleus (top-p) sampling
+                probs = torch.softmax(next_token_logits, dim=-1)
+                sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+                cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+                sorted_indices_to_remove = cumulative_probs > top_p
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[
+                    ..., :-1
+                ].clone()
+                sorted_indices_to_remove[..., 0] = 0
+                indices_to_remove = sorted_indices[sorted_indices_to_remove]
+                next_token_logits[indices_to_remove] = -float("inf")
+                next_token_id = torch.multinomial(
+                    torch.softmax(next_token_logits, dim=-1), num_samples=1
+                ).item()
+
+                if (
+                    next_token_id == vocab[EOS_TOKEN]
+                    or next_token_id == vocab[PAD_TOKEN]
+                ):
                     break
                 input_ids = torch.cat(
                     [input_ids, torch.tensor([[next_token_id]], device=device)], dim=1
                 )
-                attention_mask = (input_ids != vocab["<pad>"]).long()
             output_tokens = input_ids[0].tolist()
             return " ".join([inv_vocab.get(t, "<unk>") for t in output_tokens])
 
@@ -758,11 +753,25 @@ if __name__ == "__main__":
         qa_model = ToyLLMForQuestionAnswering(base_llm).to(DEVICE)
 
         try:
+            # Load weights from the pre-trained language model head
             pretrained_dict = torch.load(PRETRAINED_MODEL_PATH, map_location=DEVICE)
-            qa_model.llm.load_state_dict(pretrained_dict)
+            # We need to load the llm part from the pre-trained model's state dict
+            # The keys in pretrained_dict are like 'llm.token_embedding.weight', 'lm_head.weight'
+            # We want to match them to 'llm.token_embedding.weight' in the qa_model
+            # So, we can directly load the state dict of the llm part
+            qa_model.llm.load_state_dict(
+                {
+                    k.replace("llm.", ""): v
+                    for k, v in pretrained_dict.items()
+                    if k.startswith("llm.")
+                }
+            )
             print("Successfully loaded pre-trained weights into the QA model.")
         except FileNotFoundError:
             print(f"WARNING: Pre-trained model not found at {PRETRAINED_MODEL_PATH}.")
+            print("Fine-tuning will start from randomly initialized weights.")
+        except Exception as e:
+            print(f"Error loading pre-trained weights: {e}")
             print("Fine-tuning will start from randomly initialized weights.")
 
         BATCH_SIZE_QA = 8
@@ -813,104 +822,55 @@ if __name__ == "__main__":
     else:
         print("Skipping fine-tuning step.")
 
-    # Always run validation, regardless of SKIP_PRETRAIN or SKIP_FINETUNE
     print("\n--- Running Validation Metrics on QA-SRL Validation Set ---")
-    qa_model = ToyLLMForQuestionAnswering(base_llm).to(DEVICE)
+    qa_model_for_eval = ToyLLMForQuestionAnswering(base_llm).to(DEVICE)
     try:
-        # Try to load finetuned weights first, else pretrained, else random
         if os.path.exists(FINETUNED_MODEL_PATH):
-            qa_model.load_state_dict(
+            qa_model_for_eval.load_state_dict(
                 torch.load(FINETUNED_MODEL_PATH, map_location=DEVICE)
             )
-            print(f"Loaded finetuned model from {FINETUNED_MODEL_PATH}")
+            print(f"Loaded finetuned model from {FINETUNED_MODEL_PATH} for validation.")
         elif os.path.exists(PRETRAINED_MODEL_PATH):
             pretrained_dict = torch.load(PRETRAINED_MODEL_PATH, map_location=DEVICE)
-            qa_model.llm.load_state_dict(pretrained_dict)
-            print(f"Loaded pretrained model from {PRETRAINED_MODEL_PATH}")
+            qa_model_for_eval.llm.load_state_dict(
+                {
+                    k.replace("llm.", ""): v
+                    for k, v in pretrained_dict.items()
+                    if k.startswith("llm.")
+                }
+            )
+            print(
+                f"Loaded pretrained model from {PRETRAINED_MODEL_PATH} for validation."
+            )
         else:
             print(
                 "No trained weights found. Using randomly initialized model for validation."
             )
     except Exception as e:
-        print(
-            f"Error loading model weights: {e}\nUsing randomly initialized model for validation."
-        )
+        print(f"Error loading model weights for validation: {e}. Using random weights.")
 
     BATCH_SIZE_QA = 8
     qa_val_dataset = QASRLDataset(
         split="validation", tokenizer_fn=TOKENIZER, vocab=vocab, max_seq_len=MAX_SEQ_LEN
     )
-    collate_fn_qa = lambda batch: collate_batch_qa(batch, PAD_TOKEN_ID)
+    collate_fn_qa_val = lambda batch: collate_batch_qa(batch, PAD_TOKEN_ID)
     qa_val_dataloader = DataLoader(
         qa_val_dataset,
         batch_size=BATCH_SIZE_QA,
         shuffle=False,
-        collate_fn=collate_fn_qa,
+        collate_fn=collate_fn_qa_val,
     )
 
-    final_acc, final_f1 = evaluate_qa_metrics(qa_model, qa_val_dataloader, DEVICE)
+    val_acc, val_f1 = evaluate_qa_metrics(qa_model_for_eval, qa_val_dataloader, DEVICE)
     print(
-        f"Final Validation Accuracy: {final_acc:.4f} | Final Validation F1: {final_f1:.4f}"
+        f"Final Validation Accuracy: {val_acc:.4f} | Final Validation F1: {val_f1:.4f}"
     )
     with open("models/validation_stats.json", "w") as f:
         json.dump(
             {
-                "final_validation_accuracy": final_acc,
-                "final_validation_f1": final_f1,
+                "final_validation_accuracy": val_acc,
+                "final_validation_f1": val_f1,
             },
             f,
             indent=2,
         )
-
-    # Print out an example train and validation example at the end
-    print("\nExample from QA-SRL train set:")
-    qa_train_dataset = QASRLDataset(
-        split="train", tokenizer_fn=TOKENIZER, vocab=vocab, max_seq_len=MAX_SEQ_LEN
-    )
-
-    def decode_input_ids(input_ids, vocab):
-        idx_to_token = vocab.index_to_token
-        if hasattr(input_ids, "tolist"):
-            input_ids = input_ids.tolist()
-        return [idx_to_token[idx] for idx in input_ids]
-
-    if len(qa_train_dataset) > 0:
-        train_ex = qa_train_dataset[0]
-        print(train_ex)
-        train_tokens = decode_input_ids(train_ex["input_ids"], vocab)
-        if "<sep>" in train_tokens:
-            sep_idx = train_tokens.index("<sep>")
-            question_tokens = train_tokens[1:sep_idx]  # skip <bos>
-            context_tokens = train_tokens[sep_idx + 1 : -1]  # skip <eos>
-            print("Train question:", " ".join(question_tokens))
-            print("Train context:", " ".join(context_tokens))
-            # Print answer span
-            start = train_ex["start_position"].item()
-            end = train_ex["end_position"].item()
-            answer_tokens = train_tokens[start : end + 1]
-            print("Train answer:", " ".join(answer_tokens))
-        else:
-            print("Could not find <sep> token in train input_ids.")
-    else:
-        print("No examples in train set.")
-
-    print("\nExample from QA-SRL validation set:")
-    if len(qa_val_dataset) > 0:
-        val_ex = qa_val_dataset[0]
-        print(val_ex)
-        val_tokens = decode_input_ids(val_ex["input_ids"], vocab)
-        if "<sep>" in val_tokens:
-            sep_idx = val_tokens.index("<sep>")
-            question_tokens = val_tokens[1:sep_idx]
-            context_tokens = val_tokens[sep_idx + 1 : -1]
-            print("Validation question:", " ".join(question_tokens))
-            print("Validation context:", " ".join(context_tokens))
-            # Print answer span
-            start = val_ex["start_position"].item()
-            end = val_ex["end_position"].item()
-            answer_tokens = val_tokens[start : end + 1]
-            print("Validation answer:", " ".join(answer_tokens))
-        else:
-            print("Could not find <sep> token in validation input_ids.")
-    else:
-        print("No examples in validation set.")
