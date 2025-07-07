@@ -665,7 +665,7 @@ if __name__ == "__main__":
             collate_fn=collate_fn_clm,
         )
 
-        optimizer_pretrain = optim.AdamW(pretrain_model.parameters(), lr=1e-4)
+        optimizer_pretrain = optim.AdamW(pretrain_model.parameters(), lr=3e-4)
         scheduler_pretrain = CosineAnnealingLR(
             optimizer_pretrain, T_max=NUM_PRETRAIN_EPOCHS
         )
