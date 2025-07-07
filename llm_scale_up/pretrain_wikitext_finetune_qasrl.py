@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.optim as optim
 from datasets import load_dataset
 from torch.nn.utils.rnn import pad_sequence
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader, Dataset
 
 from llm_scale_up.utils.eval_metrics import evaluate_qa_metrics
@@ -622,6 +622,7 @@ if __name__ == "__main__":
     tiny_config = LLMConfig(name="TinyQA", n_layers=2, hidden_size=128, n_heads=2)
     MAX_SEQ_LEN = 256
     DROPOUT_RATE = 0.1
+    NUM_PRETRAIN_EPOCHS = 50
 
     base_llm = ToyLLM(
         config=tiny_config,
@@ -665,9 +666,10 @@ if __name__ == "__main__":
         )
 
         optimizer_pretrain = optim.AdamW(pretrain_model.parameters(), lr=1e-4)
-        scheduler_pretrain = StepLR(optimizer_pretrain, step_size=10, gamma=0.5)
+        scheduler_pretrain = CosineAnnealingLR(
+            optimizer_pretrain, T_max=NUM_PRETRAIN_EPOCHS
+        )
         criterion_clm = nn.CrossEntropyLoss(ignore_index=-100)
-        NUM_PRETRAIN_EPOCHS = 50
 
         for epoch in range(1, NUM_PRETRAIN_EPOCHS + 1):
             avg_epoch_loss = pretrain_epoch(
@@ -787,7 +789,9 @@ if __name__ == "__main__":
         )
 
         optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=5e-5)
-        scheduler_finetune = StepLR(optimizer_finetune, step_size=10, gamma=0.5)
+        scheduler_finetune = CosineAnnealingLR(
+            optimizer_finetune, T_max=NUM_FINETUNE_EPOCHS
+        )
 
         print(f"Starting fine-tuning for {NUM_FINETUNE_EPOCHS} epochs...")
         for epoch in range(1, NUM_FINETUNE_EPOCHS + 1):
