@@ -13,7 +13,19 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader, Dataset
 
-from llm_scale_up.utils.eval_metrics import evaluate_qa_metrics
+# This import assumes the eval script is in a specific utils directory
+# from llm_scale_up.utils.eval_metrics import evaluate_qa_metrics
+# For standalone execution, we will mock this function if it's not found
+try:
+    from llm_scale_up.utils.eval_metrics import evaluate_qa_metrics
+except ImportError:
+    print("Warning: `evaluate_qa_metrics` not found. Using a mock function.")
+
+    def evaluate_qa_metrics(model, dataloader, device):
+        # Mock function returns dummy values if the original is not available
+        print("Mock evaluation: Returning 0.0 for accuracy and F1.")
+        return 0.0, 0.0
+
 
 # need to modularise this later
 
@@ -407,33 +419,21 @@ def collate_batch_clm(batch, vocab, tokenizer_fn, max_seq_len, device):
     )
 
 
-def pretrain_epoch(
-    model, dataloader, optimizer, criterion, device, epoch_num, log_interval=100
-):
-    model.train()
+def validate_pretrain_epoch(model, dataloader, criterion, device):
+    """Runs a validation loop for one epoch during pre-training."""
+    model.eval()  # Set the model to evaluation mode
     total_loss = 0
-    num_batches = 0
-    for batch_idx, (clm_inputs, clm_labels, attention_masks) in enumerate(dataloader):
-        if clm_inputs is None:
-            continue
-        optimizer.zero_grad()
-        # Enable causal masking for pre-training
-        output_logits = model(
-            clm_inputs, attention_mask=attention_masks, is_causal=True
-        )
-        loss = criterion(
-            output_logits.view(-1, model.llm.vocab_size), clm_labels.view(-1)
-        )
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
-        optimizer.step()
-        total_loss += loss.item()
-        num_batches += 1
-        if batch_idx % log_interval == 0 and batch_idx > 0:
-            avg_loss = total_loss / (batch_idx + 1)
-            print(
-                f"Pre-train Epoch {epoch_num} | Batch {batch_idx}/{len(dataloader)} | Avg Loss: {avg_loss:.4f}"
+    with torch.no_grad():  # Disable gradient calculation
+        for clm_inputs, clm_labels, attention_masks in dataloader:
+            if clm_inputs is None:
+                continue
+            output_logits = model(
+                clm_inputs, attention_mask=attention_masks, is_causal=True
             )
+            loss = criterion(
+                output_logits.view(-1, model.llm.vocab_size), clm_labels.view(-1)
+            )
+            total_loss += loss.item()
     return total_loss / len(dataloader) if len(dataloader) > 0 else 0
 
 
@@ -613,16 +613,21 @@ if __name__ == "__main__":
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {DEVICE}")
 
+    # --- Build Vocab ---
     vocab = build_unified_vocab(min_freq=1)
     VOCAB_SIZE = len(vocab)
     PAD_TOKEN_ID = vocab[PAD_TOKEN]
     print(f"Unified vocabulary size: {VOCAB_SIZE}")
     print(f"PAD token ID: {PAD_TOKEN_ID}")
 
+    # --- Model and Training Config ---
     tiny_config = LLMConfig(name="TinyQA", n_layers=2, hidden_size=128, n_heads=2)
     MAX_SEQ_LEN = 256
     DROPOUT_RATE = 0.1
-    NUM_PRETRAIN_EPOCHS = 50
+    PRETRAIN_LR = 3e-4
+    NUM_PRETRAIN_EPOCHS = 100  # Set a high number, early stopping will find the best
+    PRETRAIN_PATIENCE = 5  # Early stopping patience
+    WARMUP_STEPS = 500  # Number of warm-up steps for the learning rate
 
     base_llm = ToyLLM(
         config=tiny_config,
@@ -644,15 +649,17 @@ if __name__ == "__main__":
 
     os.makedirs(os.path.dirname(PRETRAINED_MODEL_PATH), exist_ok=True)
     os.makedirs(os.path.dirname(FINETUNED_MODEL_PATH), exist_ok=True)
-    print(f"Pre-trained model will be saved to created dir: {PRETRAINED_MODEL_PATH}")
+    print(f"Best pre-trained model will be saved to: {PRETRAINED_MODEL_PATH}")
 
     if not SKIP_PRETRAIN:
         print("\n--- Starting CLM Pre-training with Unified Vocab ---")
         pretrain_model = ToyLLMForPretraining(base_llm).to(DEVICE)
 
         dataset_loader_main = WikiText2Dataset()
-        train_iter_raw, _, _ = dataset_loader_main()
+        train_iter_raw, valid_iter_raw, _ = dataset_loader_main()
+
         train_data_list = [line for line in train_iter_raw if line.strip()]
+        valid_data_list = [line for line in valid_iter_raw if line.strip()]
 
         BATCH_SIZE_PRETRAIN = 16
         collate_fn_clm = lambda batch: collate_batch_clm(
@@ -664,29 +671,89 @@ if __name__ == "__main__":
             shuffle=True,
             collate_fn=collate_fn_clm,
         )
+        val_dataloader_clm = DataLoader(
+            valid_data_list,
+            batch_size=BATCH_SIZE_PRETRAIN,
+            shuffle=False,
+            collate_fn=collate_fn_clm,
+        )
 
-        optimizer_pretrain = optim.AdamW(pretrain_model.parameters(), lr=3e-4)
+        optimizer_pretrain = optim.AdamW(
+            pretrain_model.parameters(), lr=PRETRAIN_LR, weight_decay=0.1
+        )
         scheduler_pretrain = CosineAnnealingLR(
             optimizer_pretrain, T_max=NUM_PRETRAIN_EPOCHS
         )
-        criterion_clm = nn.CrossEntropyLoss(ignore_index=-100)
+        criterion_clm = nn.CrossEntropyLoss(ignore_index=-100, label_smoothing=0.1)
+
+        best_val_loss = float("inf")
+        epochs_no_improve = 0
+        global_step = 0
 
         for epoch in range(1, NUM_PRETRAIN_EPOCHS + 1):
-            avg_epoch_loss = pretrain_epoch(
-                pretrain_model,
-                train_dataloader_clm,
-                optimizer_pretrain,
-                criterion_clm,
-                DEVICE,
-                epoch,
-                log_interval=500,
+            pretrain_model.train()
+            total_train_loss = 0
+
+            for batch_idx, (clm_inputs, clm_labels, attention_masks) in enumerate(
+                train_dataloader_clm
+            ):
+                global_step += 1
+                if clm_inputs is None:
+                    continue
+
+                # --- LR Warm-up Logic ---
+                if global_step < WARMUP_STEPS:
+                    lr_scale = global_step / WARMUP_STEPS
+                    for param_group in optimizer_pretrain.param_groups:
+                        param_group["lr"] = lr_scale * PRETRAIN_LR
+
+                optimizer_pretrain.zero_grad()
+                output_logits = pretrain_model(
+                    clm_inputs, attention_mask=attention_masks, is_causal=True
+                )
+                loss = criterion_clm(
+                    output_logits.view(-1, pretrain_model.llm.vocab_size),
+                    clm_labels.view(-1),
+                )
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(pretrain_model.parameters(), 0.5)
+                optimizer_pretrain.step()
+                total_train_loss += loss.item()
+
+            avg_train_loss = total_train_loss / len(train_dataloader_clm)
+
+            # Step the scheduler after the warm-up phase is over
+            if global_step >= WARMUP_STEPS:
+                scheduler_pretrain.step()
+
+            avg_val_loss = validate_pretrain_epoch(
+                pretrain_model, val_dataloader_clm, criterion_clm, DEVICE
             )
-            scheduler_pretrain.step()
+
+            current_lr = optimizer_pretrain.param_groups[0]["lr"]
             print(
-                f"--- End of Pre-train Epoch {epoch} | Average Loss: {avg_epoch_loss:.4f} | "
-                f"LR: {scheduler_pretrain.get_last_lr()[0]:.6f} ---"
+                f"--- End of Pre-train Epoch {epoch} | Train Loss: {avg_train_loss:.4f} | "
+                f"Validation Loss: {avg_val_loss:.4f} | LR: {current_lr:.6f} ---"
             )
-        torch.save(pretrain_model.state_dict(), PRETRAINED_MODEL_PATH)
+
+            if avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
+                epochs_no_improve = 0
+                torch.save(pretrain_model.state_dict(), PRETRAINED_MODEL_PATH)
+                print(
+                    f"Validation loss improved. Saving model to {PRETRAINED_MODEL_PATH}"
+                )
+            else:
+                epochs_no_improve += 1
+
+            if epochs_no_improve >= PRETRAIN_PATIENCE:
+                print(
+                    f"\nEarly stopping triggered after {PRETRAIN_PATIENCE} epochs without improvement."
+                )
+                break
+
+        print(f"\nLoading best pretrained model from {PRETRAINED_MODEL_PATH}")
+        pretrain_model.load_state_dict(torch.load(PRETRAINED_MODEL_PATH))
 
         def simple_generate(
             model, prompt, vocab, tokenizer_fn, max_len=20, top_p=0.9, device=DEVICE
@@ -704,14 +771,12 @@ if __name__ == "__main__":
             for _ in range(max_len):
                 attention_mask = (input_ids != vocab[PAD_TOKEN]).long()
                 with torch.no_grad():
-                    # Set is_causal=True for generation
                     logits = model(
                         input_ids, attention_mask=attention_mask, is_causal=True
                     )
 
                 next_token_logits = logits[0, -1, :]
 
-                # Apply nucleus (top-p) sampling
                 probs = torch.softmax(next_token_logits, dim=-1)
                 sorted_probs, sorted_indices = torch.sort(probs, descending=True)
                 cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
@@ -755,12 +820,7 @@ if __name__ == "__main__":
         qa_model = ToyLLMForQuestionAnswering(base_llm).to(DEVICE)
 
         try:
-            # Load weights from the pre-trained language model head
             pretrained_dict = torch.load(PRETRAINED_MODEL_PATH, map_location=DEVICE)
-            # We need to load the llm part from the pre-trained model's state dict
-            # The keys in pretrained_dict are like 'llm.token_embedding.weight', 'lm_head.weight'
-            # We want to match them to 'llm.token_embedding.weight' in the qa_model
-            # So, we can directly load the state dict of the llm part
             qa_model.llm.load_state_dict(
                 {
                     k.replace("llm.", ""): v
@@ -812,7 +872,7 @@ if __name__ == "__main__":
         print(f"Final Accuracy: {final_acc:.4f} | Final F1: {final_f1:.4f}")
 
         stats = {
-            "pretrain_epochs": 0 if SKIP_PRETRAIN else NUM_PRETRAIN_EPOCHS,
+            "pretrain_epochs": 0 if SKIP_PRETRAIN else epoch,
             "finetune_epochs": NUM_FINETUNE_EPOCHS,
             "final_loss": avg_epoch_loss,
             "final_accuracy": final_acc,
@@ -822,7 +882,6 @@ if __name__ == "__main__":
         with open("models/finetune_stats.json", "w") as f:
             json.dump(stats, f, indent=2)
         print("Final training statistics saved to 'models/finetune_stats.json'")
-
     else:
         print("Skipping fine-tuning step.")
 
