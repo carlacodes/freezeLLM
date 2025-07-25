@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.optim as optim
 from datasets import load_dataset
 from torch.nn.utils.rnn import pad_sequence
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, Dataset
 
 # This import assumes the eval script is in a specific utils directory
@@ -614,7 +614,7 @@ if __name__ == "__main__":
     print(f"Using device: {DEVICE}")
 
     # --- Build Vocab ---
-    vocab = build_unified_vocab(min_freq=1)
+    vocab = build_unified_vocab(min_freq=2)
     VOCAB_SIZE = len(vocab)
     PAD_TOKEN_ID = vocab[PAD_TOKEN]
     print(f"Unified vocabulary size: {VOCAB_SIZE}")
@@ -681,8 +681,11 @@ if __name__ == "__main__":
         optimizer_pretrain = optim.AdamW(
             pretrain_model.parameters(), lr=PRETRAIN_LR, weight_decay=0.1
         )
-        scheduler_pretrain = CosineAnnealingLR(
-            optimizer_pretrain, T_max=NUM_PRETRAIN_EPOCHS
+        scheduler_pretrain = ReduceLROnPlateau(
+            optimizer_pretrain,
+            mode="min",
+            factor=0.5,
+            patience=2,
         )
         criterion_clm = nn.CrossEntropyLoss(ignore_index=-100, label_smoothing=0.1)
 
@@ -722,10 +725,6 @@ if __name__ == "__main__":
 
             avg_train_loss = total_train_loss / len(train_dataloader_clm)
 
-            # Step the scheduler after the warm-up phase is over
-            if global_step >= WARMUP_STEPS:
-                scheduler_pretrain.step()
-
             avg_val_loss = validate_pretrain_epoch(
                 pretrain_model, val_dataloader_clm, criterion_clm, DEVICE
             )
@@ -735,6 +734,9 @@ if __name__ == "__main__":
                 f"--- End of Pre-train Epoch {epoch} | Train Loss: {avg_train_loss:.4f} | "
                 f"Validation Loss: {avg_val_loss:.4f} | LR: {current_lr:.6f} ---"
             )
+
+            # Step the scheduler after validation
+            scheduler_pretrain.step(avg_val_loss)
 
             if avg_val_loss < best_val_loss:
                 best_val_loss = avg_val_loss
@@ -849,8 +851,8 @@ if __name__ == "__main__":
         )
 
         optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=5e-5)
-        scheduler_finetune = CosineAnnealingLR(
-            optimizer_finetune, T_max=NUM_FINETUNE_EPOCHS
+        scheduler_finetune = ReduceLROnPlateau(
+            optimizer_finetune, mode="min", factor=0.5, patience=2, verbose=True
         )
 
         print(f"Starting fine-tuning for {NUM_FINETUNE_EPOCHS} epochs...")
@@ -858,10 +860,10 @@ if __name__ == "__main__":
             avg_epoch_loss = finetune_qa_epoch(
                 qa_model, qa_train_dataloader, optimizer_finetune, DEVICE, epoch
             )
-            scheduler_finetune.step()
+            scheduler_finetune.step(avg_epoch_loss)
             print(
                 f"--- End of Finetune Epoch {epoch} | Average QA Loss: {avg_epoch_loss:.4f} "
-                f"| LR: {scheduler_finetune.get_last_lr()[0]:.6f} ---"
+                f"| LR: {scheduler_finetune.optimizer.param_groups[0]['lr']:.6f} ---"
             )
 
         print("\nFine-tuning finished.")
