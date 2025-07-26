@@ -614,7 +614,7 @@ if __name__ == "__main__":
     print(f"Using device: {DEVICE}")
 
     # --- Build Vocab ---
-    vocab = build_unified_vocab(min_freq=2)
+    vocab = build_unified_vocab(min_freq=5)
     VOCAB_SIZE = len(vocab)
     PAD_TOKEN_ID = vocab[PAD_TOKEN]
     print(f"Unified vocabulary size: {VOCAB_SIZE}")
@@ -852,7 +852,10 @@ if __name__ == "__main__":
 
         optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=5e-5)
         scheduler_finetune = ReduceLROnPlateau(
-            optimizer_finetune, mode="min", factor=0.5, patience=2, verbose=True
+            optimizer_finetune,
+            mode="min",
+            factor=0.5,
+            patience=2,
         )
 
         print(f"Starting fine-tuning for {NUM_FINETUNE_EPOCHS} epochs...")
@@ -881,7 +884,7 @@ if __name__ == "__main__":
             "final_f1": final_f1,
         }
 
-        with open("models/finetune_stats.json", "w") as f:
+        with open(f"models/finetune_stats_{date_now}", "w") as f:
             json.dump(stats, f, indent=2)
         print("Final training statistics saved to 'models/finetune_stats.json'")
     else:
@@ -930,7 +933,7 @@ if __name__ == "__main__":
     print(
         f"Final Validation Accuracy: {val_acc:.4f} | Final Validation F1: {val_f1:.4f}"
     )
-    with open("models/validation_stats.json", "w") as f:
+    with open(f"models/validation_stats_{date_now}", "w") as f:
         json.dump(
             {
                 "final_validation_accuracy": val_acc,
