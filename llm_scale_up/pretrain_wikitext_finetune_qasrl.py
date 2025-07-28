@@ -614,7 +614,7 @@ if __name__ == "__main__":
     print(f"Using device: {DEVICE}")
 
     # --- Build Vocab ---
-    vocab = build_unified_vocab(min_freq=5)
+    vocab = build_unified_vocab(min_freq=7)
     VOCAB_SIZE = len(vocab)
     PAD_TOKEN_ID = vocab[PAD_TOKEN]
     print(f"Unified vocabulary size: {VOCAB_SIZE}")
