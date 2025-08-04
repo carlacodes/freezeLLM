@@ -320,40 +320,32 @@ def validate_pretrain_epoch(model, dataloader, criterion, device):
     return total_loss / len(dataloader) if len(dataloader) > 0 else 0
 
 
-class WikiText2Dataset:
-    DATASET_NAME = "Salesforce/wikitext"
-    CONFIG_NAME = "wikitext-2-v1"
+class NQOpenDataset:
+    """Dataset class for nq_open from Google Research."""
+
+    DATASET_NAME = "nq_open"
 
     def __init__(self, cache_dir: str = None):
         self.cache_dir = cache_dir
 
-    def _hf_dataset_to_line_iterator(self, hf_split_dataset) -> Iterator[str]:
+    def _hf_dataset_to_qa_iterator(self, hf_split_dataset) -> Iterator[str]:
         for item in hf_split_dataset:
-            text_line = item.get("text", "").strip()
-            if (
-                text_line
-                and not text_line.startswith(" = ")
-                and not text_line.startswith("= ")
-            ):
-                yield text_line
+            question = item.get("question", "").strip()
+            answer = item.get("answer", [])
+            if question and answer:
+                # For simplicity, we concatenate the question with the first answer.
+                yield f"{question} {answer[0]}"
 
-    def __call__(self) -> Tuple[Iterator[str], Iterator[str], Iterator[str]]:
+    def __call__(self) -> Tuple[Iterator[str], Iterator[str]]:
         train_hf_ds = load_dataset(
-            self.DATASET_NAME, self.CONFIG_NAME, split="train", cache_dir=self.cache_dir
+            self.DATASET_NAME, split="train", cache_dir=self.cache_dir
         )
-        valid_hf_ds = load_dataset(
-            self.DATASET_NAME,
-            self.CONFIG_NAME,
-            split="validation",
-            cache_dir=self.cache_dir,
-        )
-        test_hf_ds = load_dataset(
-            self.DATASET_NAME, self.CONFIG_NAME, split="test", cache_dir=self.cache_dir
+        validation_hf_ds = load_dataset(
+            self.DATASET_NAME, split="validation", cache_dir=self.cache_dir
         )
         return (
-            self._hf_dataset_to_line_iterator(train_hf_ds),
-            self._hf_dataset_to_line_iterator(valid_hf_ds),
-            self._hf_dataset_to_line_iterator(test_hf_ds),
+            self._hf_dataset_to_qa_iterator(train_hf_ds),
+            self._hf_dataset_to_qa_iterator(validation_hf_ds),
         )
 
 
@@ -543,11 +535,11 @@ if __name__ == "__main__":
     print(f"Best pre-trained model will be saved to: {PRETRAINED_MODEL_PATH}")
 
     if not SKIP_PRETRAIN:
-        print("\n--- Starting CLM Pre-training ---")
+        print("\n--- Starting CLM Pre-training on nq_open ---")
         pretrain_model = ToyLLMForPretraining(base_llm).to(DEVICE)
 
-        dataset_loader_main = WikiText2Dataset()
-        train_iter_raw, valid_iter_raw, _ = dataset_loader_main()
+        dataset_loader_main = NQOpenDataset()
+        train_iter_raw, valid_iter_raw = dataset_loader_main()
 
         # Filter out empty lines
         train_data_list = [line for line in train_iter_raw if line.strip()]
