@@ -16,7 +16,7 @@
 #$ -pe smp 8
 
 # Set the name of the job.
-#$ -N llmfreeze_aug12_1
+#$ -N llmfreeze_aug14_3
 
 # Set the working directory to somewhere in your scratch space.
 #  This is a necessary step as compute nodes cannot write to $HOME.
@@ -25,22 +25,13 @@
 
 module purge
 
-
-module load cuda/12.2.2/gnu-10.2.0
 module load python/miniconda3/24.3.0-0
-
 source $UCL_CONDA_PATH/etc/profile.d/conda.sh
-
-conda activate llm_env
-
+conda activate llm-env
 
 
 nvidia-smi
 
-# Activate python environment
-source /home/zccecgr/llmenv4/bin/activate
+export PYTHONPATH="/home/zceccgr/Scratch/freezeLLM:$PYTHONPATH"
 
-# Your work should be done in $TMPDIR
-cd $TMPDIR
-
-python /home/zccecgr/Scratch/freezeLLM/llm_scale_up/pretrain_wikitext_finetune_qasrl.py
+python /home/zceccgr/Scratch/freezeLLM/llm_scale_up/pretrain_wikitext_finetune_qasrl.py

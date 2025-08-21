@@ -1,0 +1,82 @@
+Tue Aug 19 15:13:16 2025       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 550.127.05             Driver Version: 550.127.05     CUDA Version: 12.4     |
+|-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  Tesla V100-PCIE-32GB           Off |   00000000:58:00.0 Off |                    0 |
+| N/A   34C    P0             35W /  250W |       1MiB /  32768MiB |      1%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+                                                                                         
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI        PID   Type   Process name                              GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Using device: cuda
+Loading standard tokenizer ('bert-base-uncased')...
+Standard vocabulary size: 30522
+PAD token ID: 0
+Instantiated Base Model: TinyQA with 4,336,384 trainable parameters.
+Best pre-trained model will be saved to: models/date_20250819-151331/toy_llm_unified_pretrained.pth
+
+--- Starting CLM Pre-training on nq_open ---
+--- End of Pre-train Epoch 1 | Train Loss: 6.1283 | Validation Loss: 5.6533 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/date_20250819-151331/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 2 | Train Loss: 5.3140 | Validation Loss: 5.3919 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/date_20250819-151331/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 3 | Train Loss: 5.0408 | Validation Loss: 5.2678 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/date_20250819-151331/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 4 | Train Loss: 4.8742 | Validation Loss: 5.2018 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/date_20250819-151331/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 5 | Train Loss: 4.7580 | Validation Loss: 5.1715 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/date_20250819-151331/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 6 | Train Loss: 4.6721 | Validation Loss: 5.1413 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/date_20250819-151331/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 7 | Train Loss: 4.6030 | Validation Loss: 5.1310 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/date_20250819-151331/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 8 | Train Loss: 4.5459 | Validation Loss: 5.1068 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/date_20250819-151331/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 9 | Train Loss: 4.5004 | Validation Loss: 5.1009 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/date_20250819-151331/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 10 | Train Loss: 4.4587 | Validation Loss: 5.0913 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/date_20250819-151331/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 11 | Train Loss: 4.4233 | Validation Loss: 5.0814 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/date_20250819-151331/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 12 | Train Loss: 4.3929 | Validation Loss: 5.0904 | LR: 0.000299 ---
+--- End of Pre-train Epoch 13 | Train Loss: 4.3655 | Validation Loss: 5.0853 | LR: 0.000299 ---
+--- End of Pre-train Epoch 14 | Train Loss: 4.3412 | Validation Loss: 5.0783 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/date_20250819-151331/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 15 | Train Loss: 4.3196 | Validation Loss: 5.0827 | LR: 0.000299 ---
+--- End of Pre-train Epoch 16 | Train Loss: 4.3005 | Validation Loss: 5.0831 | LR: 0.000299 ---
+--- End of Pre-train Epoch 17 | Train Loss: 4.2865 | Validation Loss: 5.0734 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/date_20250819-151331/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 18 | Train Loss: 4.2711 | Validation Loss: 5.0699 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/date_20250819-151331/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 19 | Train Loss: 4.2592 | Validation Loss: 5.0810 | LR: 0.000299 ---
+--- End of Pre-train Epoch 20 | Train Loss: 4.2461 | Validation Loss: 5.0780 | LR: 0.000299 ---
+--- End of Pre-train Epoch 21 | Train Loss: 4.2347 | Validation Loss: 5.0871 | LR: 0.000299 ---
+--- End of Pre-train Epoch 22 | Train Loss: 4.0560 | Validation Loss: 5.0433 | LR: 0.000150 ---
+Validation loss improved. Saving model to models/date_20250819-151331/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 23 | Train Loss: 4.0129 | Validation Loss: 5.0465 | LR: 0.000150 ---
+--- End of Pre-train Epoch 24 | Train Loss: 3.9999 | Validation Loss: 5.0586 | LR: 0.000150 ---
+--- End of Pre-train Epoch 25 | Train Loss: 3.9925 | Validation Loss: 5.0677 | LR: 0.000150 ---
+--- End of Pre-train Epoch 26 | Train Loss: 3.8829 | Validation Loss: 5.0526 | LR: 0.000075 ---
+--- End of Pre-train Epoch 27 | Train Loss: 3.8622 | Validation Loss: 5.0618 | LR: 0.000075 ---
+
+Early stopping triggered after 5 epochs without improvement.
+
+Loading best pretrained model from models/date_20250819-151331/toy_llm_unified_pretrained.pth
+
+Testing prompt completion after pretraining:
+Prompt: 'The capital of France is'
+Model completion: the capital of france ismatary british african american territory the american territory spain
+
+--- Starting Fine-tuning on QA-SRL ---
+Successfully loaded pre-trained weights into the QA model.
+Loading and processing qa_srl dataset for 'train' split...

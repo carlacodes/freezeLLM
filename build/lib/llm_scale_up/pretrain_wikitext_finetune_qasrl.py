@@ -2,15 +2,14 @@ import json
 import os
 import time
 from typing import Iterator, Tuple
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from datasets import load_dataset, load_from_disk
+from datasets import load_dataset
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer
-DATASET_PATH = "/home/zceccgr/Scratch/downloaded_datasets/qa_srl2020"
-
 
 try:
     from llm_scale_up.utils.eval_metrics import evaluate_qa_metrics
@@ -353,8 +352,7 @@ class NQOpenDataset:
 class QASRLDataset(Dataset):
     def __init__(self, split, tokenizer, max_seq_len):
         print(f"Loading and processing qa_srl dataset for '{split}' split...")
-        self.dataset = load_from_disk(DATASET_PATH)[split]
-
+        self.dataset = load_dataset("qa_srl", split=split, trust_remote_code=True)
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
         self.processed_data = self._preprocess()

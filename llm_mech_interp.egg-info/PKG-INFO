@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: llm-mech-interp
+Version: 0.1.0
+Summary: Add your description here
+Requires-Python: >=3.12
+Requires-Dist: certifi>=2025.4.26
