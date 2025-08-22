@@ -9,7 +9,7 @@ from datasets import load_dataset, load_from_disk
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer
-DATASET_PATH = "/home/zceccgr/Scratch/downloaded_datasets/qa_srl2020"
+DATASET_PATH = "/home/zceccgr/Scratch/downloaded_datasets/qa_srl"
 
 
 try:
