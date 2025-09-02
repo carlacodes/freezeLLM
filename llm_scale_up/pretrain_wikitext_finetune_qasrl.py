@@ -696,7 +696,7 @@ if __name__ == "__main__":
 
             return tokenizer.decode(input_ids[0], skip_special_tokens=True)
 
-        test_prompt = "The capital of France is"
+        test_prompt = "where was the statue of liberty originally built"
         print("\nTesting prompt completion after pretraining:")
         print(f"Prompt: '{test_prompt}'")
         completion = simple_generate(
