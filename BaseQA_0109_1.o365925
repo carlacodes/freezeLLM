@@ -1,0 +1,538 @@
+Mon Sep  1 20:05:05 2025       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 550.127.05             Driver Version: 550.127.05     CUDA Version: 12.4     |
+|-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A100-PCIE-40GB          Off |   00000000:06:00.0 Off |                    0 |
+| N/A   39C    P0             36W /  250W |       1MiB /  40960MiB |      4%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+                                                                                         
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI        PID   Type   Process name                              GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Python script for BaseQA model...
+--- Loaded configuration 'base' from '/home/zceccgr/Scratch/freezeLLM/llm_scale_up/config.json' ---
+Using device: cuda
+Loading standard tokenizer ('bert-base-uncased')...
+Standard vocabulary size: 30522
+PAD token ID: 0
+Instantiated Base Model: BaseQA with 34,804,736 trainable parameters.
+Best pre-trained model will be saved to: models/BaseQA_20250901-200522/toy_llm_unified_pretrained.pth
+
+--- Starting CLM Pre-training on nq_open for 'BaseQA' model ---
+--- End of Pre-train Epoch 1 | Train Loss: 5.8433 | Validation Loss: 5.5249 | LR: 0.000100 ---
+Validation loss improved. Saving model to models/BaseQA_20250901-200522/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 2 | Train Loss: 5.1595 | Validation Loss: 5.2649 | LR: 0.000100 ---
+Validation loss improved. Saving model to models/BaseQA_20250901-200522/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 3 | Train Loss: 4.8629 | Validation Loss: 5.1325 | LR: 0.000100 ---
+Validation loss improved. Saving model to models/BaseQA_20250901-200522/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 4 | Train Loss: 4.6607 | Validation Loss: 5.0657 | LR: 0.000100 ---
+Validation loss improved. Saving model to models/BaseQA_20250901-200522/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 5 | Train Loss: 4.5084 | Validation Loss: 5.0078 | LR: 0.000100 ---
+Validation loss improved. Saving model to models/BaseQA_20250901-200522/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 6 | Train Loss: 4.3917 | Validation Loss: 4.9869 | LR: 0.000100 ---
+Validation loss improved. Saving model to models/BaseQA_20250901-200522/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 7 | Train Loss: 4.2979 | Validation Loss: 4.9730 | LR: 0.000100 ---
+Validation loss improved. Saving model to models/BaseQA_20250901-200522/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 8 | Train Loss: 4.2220 | Validation Loss: 4.9744 | LR: 0.000100 ---
+--- End of Pre-train Epoch 9 | Train Loss: 4.1579 | Validation Loss: 4.9761 | LR: 0.000100 ---
+--- End of Pre-train Epoch 10 | Train Loss: 4.1040 | Validation Loss: 4.9726 | LR: 0.000100 ---
+Validation loss improved. Saving model to models/BaseQA_20250901-200522/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 11 | Train Loss: 3.8246 | Validation Loss: 4.9099 | LR: 0.000050 ---
+Validation loss improved. Saving model to models/BaseQA_20250901-200522/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 12 | Train Loss: 3.7252 | Validation Loss: 4.9368 | LR: 0.000050 ---
+--- End of Pre-train Epoch 13 | Train Loss: 3.6740 | Validation Loss: 4.9546 | LR: 0.000050 ---
+--- End of Pre-train Epoch 14 | Train Loss: 3.6371 | Validation Loss: 4.9759 | LR: 0.000050 ---
+--- End of Pre-train Epoch 15 | Train Loss: 3.4415 | Validation Loss: 4.9714 | LR: 0.000025 ---
+--- End of Pre-train Epoch 16 | Train Loss: 3.3800 | Validation Loss: 4.9918 | LR: 0.000025 ---
+
+Early stopping triggered after 5 epochs without improvement.
+
+Loading best pretrained model from models/BaseQA_20250901-200522/toy_llm_unified_pretrained.pth
+
+Testing prompt completion after pretraining:
+Prompt: 'The capital of France is'
+Model completion: the capital of france is what continent 1a 2017 kansas
+
+--- Starting Fine-tuning on QA-SRL for 'BaseQA' model ---
+Successfully loaded pre-trained weights into the QA model.
+Loading and processing qa_srl dataset for 'train' split...
+Finished processing 'train'. Found 7562 valid QA examples.
+Starting fine-tuning for 6 epochs...
+Finetune Epoch 1 | Batch 50/3781 | Avg Loss: 4.9415
+Finetune Epoch 1 | Batch 100/3781 | Avg Loss: 4.5193
+Finetune Epoch 1 | Batch 150/3781 | Avg Loss: 4.2151
+Finetune Epoch 1 | Batch 200/3781 | Avg Loss: 3.9809
+Finetune Epoch 1 | Batch 250/3781 | Avg Loss: 3.8777
+Finetune Epoch 1 | Batch 300/3781 | Avg Loss: 3.7667
+Finetune Epoch 1 | Batch 350/3781 | Avg Loss: 3.6836
+Finetune Epoch 1 | Batch 400/3781 | Avg Loss: 3.6047
+Finetune Epoch 1 | Batch 450/3781 | Avg Loss: 3.5407
+Finetune Epoch 1 | Batch 500/3781 | Avg Loss: 3.5008
+Finetune Epoch 1 | Batch 550/3781 | Avg Loss: 3.4739
+Finetune Epoch 1 | Batch 600/3781 | Avg Loss: 3.4564
+Finetune Epoch 1 | Batch 650/3781 | Avg Loss: 3.4313
+Finetune Epoch 1 | Batch 700/3781 | Avg Loss: 3.4052
+Finetune Epoch 1 | Batch 750/3781 | Avg Loss: 3.3834
+Finetune Epoch 1 | Batch 800/3781 | Avg Loss: 3.3567
+Finetune Epoch 1 | Batch 850/3781 | Avg Loss: 3.3323
+Finetune Epoch 1 | Batch 900/3781 | Avg Loss: 3.3214
+Finetune Epoch 1 | Batch 950/3781 | Avg Loss: 3.2999
+Finetune Epoch 1 | Batch 1000/3781 | Avg Loss: 3.2796
+Finetune Epoch 1 | Batch 1050/3781 | Avg Loss: 3.2674
+Finetune Epoch 1 | Batch 1100/3781 | Avg Loss: 3.2527
+Finetune Epoch 1 | Batch 1150/3781 | Avg Loss: 3.2458
+Finetune Epoch 1 | Batch 1200/3781 | Avg Loss: 3.2301
+Finetune Epoch 1 | Batch 1250/3781 | Avg Loss: 3.2179
+Finetune Epoch 1 | Batch 1300/3781 | Avg Loss: 3.2051
+Finetune Epoch 1 | Batch 1350/3781 | Avg Loss: 3.1955
+Finetune Epoch 1 | Batch 1400/3781 | Avg Loss: 3.1843
+Finetune Epoch 1 | Batch 1450/3781 | Avg Loss: 3.1748
+Finetune Epoch 1 | Batch 1500/3781 | Avg Loss: 3.1674
+Finetune Epoch 1 | Batch 1550/3781 | Avg Loss: 3.1569
+Finetune Epoch 1 | Batch 1600/3781 | Avg Loss: 3.1481
+Finetune Epoch 1 | Batch 1650/3781 | Avg Loss: 3.1395
+Finetune Epoch 1 | Batch 1700/3781 | Avg Loss: 3.1281
+Finetune Epoch 1 | Batch 1750/3781 | Avg Loss: 3.1158
+Finetune Epoch 1 | Batch 1800/3781 | Avg Loss: 3.1036
+Finetune Epoch 1 | Batch 1850/3781 | Avg Loss: 3.1003
+Finetune Epoch 1 | Batch 1900/3781 | Avg Loss: 3.0883
+Finetune Epoch 1 | Batch 1950/3781 | Avg Loss: 3.0767
+Finetune Epoch 1 | Batch 2000/3781 | Avg Loss: 3.0693
+Finetune Epoch 1 | Batch 2050/3781 | Avg Loss: 3.0632
+Finetune Epoch 1 | Batch 2100/3781 | Avg Loss: 3.0549
+Finetune Epoch 1 | Batch 2150/3781 | Avg Loss: 3.0502
+Finetune Epoch 1 | Batch 2200/3781 | Avg Loss: 3.0421
+Finetune Epoch 1 | Batch 2250/3781 | Avg Loss: 3.0362
+Finetune Epoch 1 | Batch 2300/3781 | Avg Loss: 3.0283
+Finetune Epoch 1 | Batch 2350/3781 | Avg Loss: 3.0207
+Finetune Epoch 1 | Batch 2400/3781 | Avg Loss: 3.0158
+Finetune Epoch 1 | Batch 2450/3781 | Avg Loss: 3.0074
+Finetune Epoch 1 | Batch 2500/3781 | Avg Loss: 3.0000
+Finetune Epoch 1 | Batch 2550/3781 | Avg Loss: 2.9942
+Finetune Epoch 1 | Batch 2600/3781 | Avg Loss: 2.9869
+Finetune Epoch 1 | Batch 2650/3781 | Avg Loss: 2.9770
+Finetune Epoch 1 | Batch 2700/3781 | Avg Loss: 2.9715
+Finetune Epoch 1 | Batch 2750/3781 | Avg Loss: 2.9661
+Finetune Epoch 1 | Batch 2800/3781 | Avg Loss: 2.9626
+Finetune Epoch 1 | Batch 2850/3781 | Avg Loss: 2.9524
+Finetune Epoch 1 | Batch 2900/3781 | Avg Loss: 2.9487
+Finetune Epoch 1 | Batch 2950/3781 | Avg Loss: 2.9422
+Finetune Epoch 1 | Batch 3000/3781 | Avg Loss: 2.9377
+Finetune Epoch 1 | Batch 3050/3781 | Avg Loss: 2.9326
+Finetune Epoch 1 | Batch 3100/3781 | Avg Loss: 2.9289
+Finetune Epoch 1 | Batch 3150/3781 | Avg Loss: 2.9265
+Finetune Epoch 1 | Batch 3200/3781 | Avg Loss: 2.9236
+Finetune Epoch 1 | Batch 3250/3781 | Avg Loss: 2.9179
+Finetune Epoch 1 | Batch 3300/3781 | Avg Loss: 2.9145
+Finetune Epoch 1 | Batch 3350/3781 | Avg Loss: 2.9113
+Finetune Epoch 1 | Batch 3400/3781 | Avg Loss: 2.9055
+Finetune Epoch 1 | Batch 3450/3781 | Avg Loss: 2.9021
+Finetune Epoch 1 | Batch 3500/3781 | Avg Loss: 2.8947
+Finetune Epoch 1 | Batch 3550/3781 | Avg Loss: 2.8933
+Finetune Epoch 1 | Batch 3600/3781 | Avg Loss: 2.8870
+Finetune Epoch 1 | Batch 3650/3781 | Avg Loss: 2.8816
+Finetune Epoch 1 | Batch 3700/3781 | Avg Loss: 2.8742
+Finetune Epoch 1 | Batch 3750/3781 | Avg Loss: 2.8703
+--- End of Finetune Epoch 1 | Average QA Loss: 2.8689 | LR: 0.000030 ---
+Finetune Epoch 2 | Batch 50/3781 | Avg Loss: 2.0630
+Finetune Epoch 2 | Batch 100/3781 | Avg Loss: 2.1622
+Finetune Epoch 2 | Batch 150/3781 | Avg Loss: 2.1760
+Finetune Epoch 2 | Batch 200/3781 | Avg Loss: 2.1981
+Finetune Epoch 2 | Batch 250/3781 | Avg Loss: 2.1847
+Finetune Epoch 2 | Batch 300/3781 | Avg Loss: 2.2112
+Finetune Epoch 2 | Batch 350/3781 | Avg Loss: 2.1958
+Finetune Epoch 2 | Batch 400/3781 | Avg Loss: 2.2192
+Finetune Epoch 2 | Batch 450/3781 | Avg Loss: 2.2043
+Finetune Epoch 2 | Batch 500/3781 | Avg Loss: 2.2010
+Finetune Epoch 2 | Batch 550/3781 | Avg Loss: 2.2015
+Finetune Epoch 2 | Batch 600/3781 | Avg Loss: 2.2137
+Finetune Epoch 2 | Batch 650/3781 | Avg Loss: 2.2029
+Finetune Epoch 2 | Batch 700/3781 | Avg Loss: 2.1990
+Finetune Epoch 2 | Batch 750/3781 | Avg Loss: 2.1942
+Finetune Epoch 2 | Batch 800/3781 | Avg Loss: 2.1996
+Finetune Epoch 2 | Batch 850/3781 | Avg Loss: 2.1913
+Finetune Epoch 2 | Batch 900/3781 | Avg Loss: 2.1800
+Finetune Epoch 2 | Batch 950/3781 | Avg Loss: 2.1941
+Finetune Epoch 2 | Batch 1000/3781 | Avg Loss: 2.1898
+Finetune Epoch 2 | Batch 1050/3781 | Avg Loss: 2.1871
+Finetune Epoch 2 | Batch 1100/3781 | Avg Loss: 2.1853
+Finetune Epoch 2 | Batch 1150/3781 | Avg Loss: 2.1912
+Finetune Epoch 2 | Batch 1200/3781 | Avg Loss: 2.1942
+Finetune Epoch 2 | Batch 1250/3781 | Avg Loss: 2.2042
+Finetune Epoch 2 | Batch 1300/3781 | Avg Loss: 2.2062
+Finetune Epoch 2 | Batch 1350/3781 | Avg Loss: 2.2089
+Finetune Epoch 2 | Batch 1400/3781 | Avg Loss: 2.2107
+Finetune Epoch 2 | Batch 1450/3781 | Avg Loss: 2.2117
+Finetune Epoch 2 | Batch 1500/3781 | Avg Loss: 2.2056
+Finetune Epoch 2 | Batch 1550/3781 | Avg Loss: 2.2071
+Finetune Epoch 2 | Batch 1600/3781 | Avg Loss: 2.2095
+Finetune Epoch 2 | Batch 1650/3781 | Avg Loss: 2.2110
+Finetune Epoch 2 | Batch 1700/3781 | Avg Loss: 2.2082
+Finetune Epoch 2 | Batch 1750/3781 | Avg Loss: 2.2059
+Finetune Epoch 2 | Batch 1800/3781 | Avg Loss: 2.2045
+Finetune Epoch 2 | Batch 1850/3781 | Avg Loss: 2.2040
+Finetune Epoch 2 | Batch 1900/3781 | Avg Loss: 2.2023
+Finetune Epoch 2 | Batch 1950/3781 | Avg Loss: 2.2026
+Finetune Epoch 2 | Batch 2000/3781 | Avg Loss: 2.2043
+Finetune Epoch 2 | Batch 2050/3781 | Avg Loss: 2.2077
+Finetune Epoch 2 | Batch 2100/3781 | Avg Loss: 2.2089
+Finetune Epoch 2 | Batch 2150/3781 | Avg Loss: 2.2111
+Finetune Epoch 2 | Batch 2200/3781 | Avg Loss: 2.2084
+Finetune Epoch 2 | Batch 2250/3781 | Avg Loss: 2.2065
+Finetune Epoch 2 | Batch 2300/3781 | Avg Loss: 2.2160
+Finetune Epoch 2 | Batch 2350/3781 | Avg Loss: 2.2172
+Finetune Epoch 2 | Batch 2400/3781 | Avg Loss: 2.2176
+Finetune Epoch 2 | Batch 2450/3781 | Avg Loss: 2.2150
+Finetune Epoch 2 | Batch 2500/3781 | Avg Loss: 2.2178
+Finetune Epoch 2 | Batch 2550/3781 | Avg Loss: 2.2133
+Finetune Epoch 2 | Batch 2600/3781 | Avg Loss: 2.2099
+Finetune Epoch 2 | Batch 2650/3781 | Avg Loss: 2.2099
+Finetune Epoch 2 | Batch 2700/3781 | Avg Loss: 2.2083
+Finetune Epoch 2 | Batch 2750/3781 | Avg Loss: 2.2064
+Finetune Epoch 2 | Batch 2800/3781 | Avg Loss: 2.2076
+Finetune Epoch 2 | Batch 2850/3781 | Avg Loss: 2.2051
+Finetune Epoch 2 | Batch 2900/3781 | Avg Loss: 2.2069
+Finetune Epoch 2 | Batch 2950/3781 | Avg Loss: 2.2055
+Finetune Epoch 2 | Batch 3000/3781 | Avg Loss: 2.2061
+Finetune Epoch 2 | Batch 3050/3781 | Avg Loss: 2.2077
+Finetune Epoch 2 | Batch 3100/3781 | Avg Loss: 2.2083
+Finetune Epoch 2 | Batch 3150/3781 | Avg Loss: 2.2097
+Finetune Epoch 2 | Batch 3200/3781 | Avg Loss: 2.2101
+Finetune Epoch 2 | Batch 3250/3781 | Avg Loss: 2.2088
+Finetune Epoch 2 | Batch 3300/3781 | Avg Loss: 2.2100
+Finetune Epoch 2 | Batch 3350/3781 | Avg Loss: 2.2101
+Finetune Epoch 2 | Batch 3400/3781 | Avg Loss: 2.2107
+Finetune Epoch 2 | Batch 3450/3781 | Avg Loss: 2.2076
+Finetune Epoch 2 | Batch 3500/3781 | Avg Loss: 2.2070
+Finetune Epoch 2 | Batch 3550/3781 | Avg Loss: 2.2053
+Finetune Epoch 2 | Batch 3600/3781 | Avg Loss: 2.2047
+Finetune Epoch 2 | Batch 3650/3781 | Avg Loss: 2.2064
+Finetune Epoch 2 | Batch 3700/3781 | Avg Loss: 2.2076
+Finetune Epoch 2 | Batch 3750/3781 | Avg Loss: 2.2089
+--- End of Finetune Epoch 2 | Average QA Loss: 2.2078 | LR: 0.000030 ---
+Finetune Epoch 3 | Batch 50/3781 | Avg Loss: 1.6063
+Finetune Epoch 3 | Batch 100/3781 | Avg Loss: 1.7030
+Finetune Epoch 3 | Batch 150/3781 | Avg Loss: 1.6491
+Finetune Epoch 3 | Batch 200/3781 | Avg Loss: 1.6134
+Finetune Epoch 3 | Batch 250/3781 | Avg Loss: 1.6150
+Finetune Epoch 3 | Batch 300/3781 | Avg Loss: 1.5934
+Finetune Epoch 3 | Batch 350/3781 | Avg Loss: 1.5929
+Finetune Epoch 3 | Batch 400/3781 | Avg Loss: 1.5955
+Finetune Epoch 3 | Batch 450/3781 | Avg Loss: 1.5967
+Finetune Epoch 3 | Batch 500/3781 | Avg Loss: 1.6008
+Finetune Epoch 3 | Batch 550/3781 | Avg Loss: 1.6318
+Finetune Epoch 3 | Batch 600/3781 | Avg Loss: 1.6447
+Finetune Epoch 3 | Batch 650/3781 | Avg Loss: 1.6598
+Finetune Epoch 3 | Batch 700/3781 | Avg Loss: 1.6610
+Finetune Epoch 3 | Batch 750/3781 | Avg Loss: 1.6714
+Finetune Epoch 3 | Batch 800/3781 | Avg Loss: 1.6757
+Finetune Epoch 3 | Batch 850/3781 | Avg Loss: 1.6827
+Finetune Epoch 3 | Batch 900/3781 | Avg Loss: 1.6958
+Finetune Epoch 3 | Batch 950/3781 | Avg Loss: 1.7040
+Finetune Epoch 3 | Batch 1000/3781 | Avg Loss: 1.7084
+Finetune Epoch 3 | Batch 1050/3781 | Avg Loss: 1.7052
+Finetune Epoch 3 | Batch 1100/3781 | Avg Loss: 1.7152
+Finetune Epoch 3 | Batch 1150/3781 | Avg Loss: 1.7138
+Finetune Epoch 3 | Batch 1200/3781 | Avg Loss: 1.7181
+Finetune Epoch 3 | Batch 1250/3781 | Avg Loss: 1.7175
+Finetune Epoch 3 | Batch 1300/3781 | Avg Loss: 1.7150
+Finetune Epoch 3 | Batch 1350/3781 | Avg Loss: 1.7225
+Finetune Epoch 3 | Batch 1400/3781 | Avg Loss: 1.7218
+Finetune Epoch 3 | Batch 1450/3781 | Avg Loss: 1.7243
+Finetune Epoch 3 | Batch 1500/3781 | Avg Loss: 1.7292
+Finetune Epoch 3 | Batch 1550/3781 | Avg Loss: 1.7324
+Finetune Epoch 3 | Batch 1600/3781 | Avg Loss: 1.7396
+Finetune Epoch 3 | Batch 1650/3781 | Avg Loss: 1.7496
+Finetune Epoch 3 | Batch 1700/3781 | Avg Loss: 1.7524
+Finetune Epoch 3 | Batch 1750/3781 | Avg Loss: 1.7452
+Finetune Epoch 3 | Batch 1800/3781 | Avg Loss: 1.7486
+Finetune Epoch 3 | Batch 1850/3781 | Avg Loss: 1.7488
+Finetune Epoch 3 | Batch 1900/3781 | Avg Loss: 1.7469
+Finetune Epoch 3 | Batch 1950/3781 | Avg Loss: 1.7492
+Finetune Epoch 3 | Batch 2000/3781 | Avg Loss: 1.7505
+Finetune Epoch 3 | Batch 2050/3781 | Avg Loss: 1.7459
+Finetune Epoch 3 | Batch 2100/3781 | Avg Loss: 1.7483
+Finetune Epoch 3 | Batch 2150/3781 | Avg Loss: 1.7468
+Finetune Epoch 3 | Batch 2200/3781 | Avg Loss: 1.7510
+Finetune Epoch 3 | Batch 2250/3781 | Avg Loss: 1.7560
+Finetune Epoch 3 | Batch 2300/3781 | Avg Loss: 1.7585
+Finetune Epoch 3 | Batch 2350/3781 | Avg Loss: 1.7621
+Finetune Epoch 3 | Batch 2400/3781 | Avg Loss: 1.7629
+Finetune Epoch 3 | Batch 2450/3781 | Avg Loss: 1.7688
+Finetune Epoch 3 | Batch 2500/3781 | Avg Loss: 1.7669
+Finetune Epoch 3 | Batch 2550/3781 | Avg Loss: 1.7652
+Finetune Epoch 3 | Batch 2600/3781 | Avg Loss: 1.7730
+Finetune Epoch 3 | Batch 2650/3781 | Avg Loss: 1.7753
+Finetune Epoch 3 | Batch 2700/3781 | Avg Loss: 1.7749
+Finetune Epoch 3 | Batch 2750/3781 | Avg Loss: 1.7814
+Finetune Epoch 3 | Batch 2800/3781 | Avg Loss: 1.7844
+Finetune Epoch 3 | Batch 2850/3781 | Avg Loss: 1.7857
+Finetune Epoch 3 | Batch 2900/3781 | Avg Loss: 1.7844
+Finetune Epoch 3 | Batch 2950/3781 | Avg Loss: 1.7850
+Finetune Epoch 3 | Batch 3000/3781 | Avg Loss: 1.7919
+Finetune Epoch 3 | Batch 3050/3781 | Avg Loss: 1.7921
+Finetune Epoch 3 | Batch 3100/3781 | Avg Loss: 1.7953
+Finetune Epoch 3 | Batch 3150/3781 | Avg Loss: 1.8012
+Finetune Epoch 3 | Batch 3200/3781 | Avg Loss: 1.8008
+Finetune Epoch 3 | Batch 3250/3781 | Avg Loss: 1.8003
+Finetune Epoch 3 | Batch 3300/3781 | Avg Loss: 1.8004
+Finetune Epoch 3 | Batch 3350/3781 | Avg Loss: 1.8014
+Finetune Epoch 3 | Batch 3400/3781 | Avg Loss: 1.8042
+Finetune Epoch 3 | Batch 3450/3781 | Avg Loss: 1.8049
+Finetune Epoch 3 | Batch 3500/3781 | Avg Loss: 1.8088
+Finetune Epoch 3 | Batch 3550/3781 | Avg Loss: 1.8076
+Finetune Epoch 3 | Batch 3600/3781 | Avg Loss: 1.8104
+Finetune Epoch 3 | Batch 3650/3781 | Avg Loss: 1.8111
+Finetune Epoch 3 | Batch 3700/3781 | Avg Loss: 1.8115
+Finetune Epoch 3 | Batch 3750/3781 | Avg Loss: 1.8136
+--- End of Finetune Epoch 3 | Average QA Loss: 1.8154 | LR: 0.000030 ---
+Finetune Epoch 4 | Batch 50/3781 | Avg Loss: 1.5041
+Finetune Epoch 4 | Batch 100/3781 | Avg Loss: 1.5560
+Finetune Epoch 4 | Batch 150/3781 | Avg Loss: 1.5378
+Finetune Epoch 4 | Batch 200/3781 | Avg Loss: 1.5001
+Finetune Epoch 4 | Batch 250/3781 | Avg Loss: 1.4819
+Finetune Epoch 4 | Batch 300/3781 | Avg Loss: 1.4987
+Finetune Epoch 4 | Batch 350/3781 | Avg Loss: 1.4876
+Finetune Epoch 4 | Batch 400/3781 | Avg Loss: 1.4524
+Finetune Epoch 4 | Batch 450/3781 | Avg Loss: 1.4454
+Finetune Epoch 4 | Batch 500/3781 | Avg Loss: 1.4372
+Finetune Epoch 4 | Batch 550/3781 | Avg Loss: 1.4358
+Finetune Epoch 4 | Batch 600/3781 | Avg Loss: 1.4389
+Finetune Epoch 4 | Batch 650/3781 | Avg Loss: 1.4281
+Finetune Epoch 4 | Batch 700/3781 | Avg Loss: 1.4439
+Finetune Epoch 4 | Batch 750/3781 | Avg Loss: 1.4429
+Finetune Epoch 4 | Batch 800/3781 | Avg Loss: 1.4444
+Finetune Epoch 4 | Batch 850/3781 | Avg Loss: 1.4425
+Finetune Epoch 4 | Batch 900/3781 | Avg Loss: 1.4456
+Finetune Epoch 4 | Batch 950/3781 | Avg Loss: 1.4415
+Finetune Epoch 4 | Batch 1000/3781 | Avg Loss: 1.4380
+Finetune Epoch 4 | Batch 1050/3781 | Avg Loss: 1.4337
+Finetune Epoch 4 | Batch 1100/3781 | Avg Loss: 1.4371
+Finetune Epoch 4 | Batch 1150/3781 | Avg Loss: 1.4371
+Finetune Epoch 4 | Batch 1200/3781 | Avg Loss: 1.4378
+Finetune Epoch 4 | Batch 1250/3781 | Avg Loss: 1.4391
+Finetune Epoch 4 | Batch 1300/3781 | Avg Loss: 1.4433
+Finetune Epoch 4 | Batch 1350/3781 | Avg Loss: 1.4475
+Finetune Epoch 4 | Batch 1400/3781 | Avg Loss: 1.4448
+Finetune Epoch 4 | Batch 1450/3781 | Avg Loss: 1.4432
+Finetune Epoch 4 | Batch 1500/3781 | Avg Loss: 1.4404
+Finetune Epoch 4 | Batch 1550/3781 | Avg Loss: 1.4439
+Finetune Epoch 4 | Batch 1600/3781 | Avg Loss: 1.4475
+Finetune Epoch 4 | Batch 1650/3781 | Avg Loss: 1.4570
+Finetune Epoch 4 | Batch 1700/3781 | Avg Loss: 1.4648
+Finetune Epoch 4 | Batch 1750/3781 | Avg Loss: 1.4656
+Finetune Epoch 4 | Batch 1800/3781 | Avg Loss: 1.4662
+Finetune Epoch 4 | Batch 1850/3781 | Avg Loss: 1.4692
+Finetune Epoch 4 | Batch 1900/3781 | Avg Loss: 1.4678
+Finetune Epoch 4 | Batch 1950/3781 | Avg Loss: 1.4696
+Finetune Epoch 4 | Batch 2000/3781 | Avg Loss: 1.4721
+Finetune Epoch 4 | Batch 2050/3781 | Avg Loss: 1.4762
+Finetune Epoch 4 | Batch 2100/3781 | Avg Loss: 1.4750
+Finetune Epoch 4 | Batch 2150/3781 | Avg Loss: 1.4741
+Finetune Epoch 4 | Batch 2200/3781 | Avg Loss: 1.4794
+Finetune Epoch 4 | Batch 2250/3781 | Avg Loss: 1.4802
+Finetune Epoch 4 | Batch 2300/3781 | Avg Loss: 1.4801
+Finetune Epoch 4 | Batch 2350/3781 | Avg Loss: 1.4809
+Finetune Epoch 4 | Batch 2400/3781 | Avg Loss: 1.4806
+Finetune Epoch 4 | Batch 2450/3781 | Avg Loss: 1.4872
+Finetune Epoch 4 | Batch 2500/3781 | Avg Loss: 1.4935
+Finetune Epoch 4 | Batch 2550/3781 | Avg Loss: 1.4957
+Finetune Epoch 4 | Batch 2600/3781 | Avg Loss: 1.4969
+Finetune Epoch 4 | Batch 2650/3781 | Avg Loss: 1.5009
+Finetune Epoch 4 | Batch 2700/3781 | Avg Loss: 1.5026
+Finetune Epoch 4 | Batch 2750/3781 | Avg Loss: 1.5022
+Finetune Epoch 4 | Batch 2800/3781 | Avg Loss: 1.5067
+Finetune Epoch 4 | Batch 2850/3781 | Avg Loss: 1.5083
+Finetune Epoch 4 | Batch 2900/3781 | Avg Loss: 1.5056
+Finetune Epoch 4 | Batch 2950/3781 | Avg Loss: 1.5065
+Finetune Epoch 4 | Batch 3000/3781 | Avg Loss: 1.5105
+Finetune Epoch 4 | Batch 3050/3781 | Avg Loss: 1.5122
+Finetune Epoch 4 | Batch 3100/3781 | Avg Loss: 1.5137
+Finetune Epoch 4 | Batch 3150/3781 | Avg Loss: 1.5151
+Finetune Epoch 4 | Batch 3200/3781 | Avg Loss: 1.5145
+Finetune Epoch 4 | Batch 3250/3781 | Avg Loss: 1.5174
+Finetune Epoch 4 | Batch 3300/3781 | Avg Loss: 1.5187
+Finetune Epoch 4 | Batch 3350/3781 | Avg Loss: 1.5197
+Finetune Epoch 4 | Batch 3400/3781 | Avg Loss: 1.5187
+Finetune Epoch 4 | Batch 3450/3781 | Avg Loss: 1.5169
+Finetune Epoch 4 | Batch 3500/3781 | Avg Loss: 1.5184
+Finetune Epoch 4 | Batch 3550/3781 | Avg Loss: 1.5199
+Finetune Epoch 4 | Batch 3600/3781 | Avg Loss: 1.5192
+Finetune Epoch 4 | Batch 3650/3781 | Avg Loss: 1.5176
+Finetune Epoch 4 | Batch 3700/3781 | Avg Loss: 1.5188
+Finetune Epoch 4 | Batch 3750/3781 | Avg Loss: 1.5203
+--- End of Finetune Epoch 4 | Average QA Loss: 1.5222 | LR: 0.000030 ---
+Finetune Epoch 5 | Batch 50/3781 | Avg Loss: 0.9157
+Finetune Epoch 5 | Batch 100/3781 | Avg Loss: 1.0937
+Finetune Epoch 5 | Batch 150/3781 | Avg Loss: 1.0758
+Finetune Epoch 5 | Batch 200/3781 | Avg Loss: 1.0936
+Finetune Epoch 5 | Batch 250/3781 | Avg Loss: 1.0796
+Finetune Epoch 5 | Batch 300/3781 | Avg Loss: 1.0881
+Finetune Epoch 5 | Batch 350/3781 | Avg Loss: 1.1043
+Finetune Epoch 5 | Batch 400/3781 | Avg Loss: 1.1078
+Finetune Epoch 5 | Batch 450/3781 | Avg Loss: 1.1015
+Finetune Epoch 5 | Batch 500/3781 | Avg Loss: 1.1168
+Finetune Epoch 5 | Batch 550/3781 | Avg Loss: 1.1185
+Finetune Epoch 5 | Batch 600/3781 | Avg Loss: 1.1180
+Finetune Epoch 5 | Batch 650/3781 | Avg Loss: 1.1224
+Finetune Epoch 5 | Batch 700/3781 | Avg Loss: 1.1268
+Finetune Epoch 5 | Batch 750/3781 | Avg Loss: 1.1379
+Finetune Epoch 5 | Batch 800/3781 | Avg Loss: 1.1302
+Finetune Epoch 5 | Batch 850/3781 | Avg Loss: 1.1287
+Finetune Epoch 5 | Batch 900/3781 | Avg Loss: 1.1444
+Finetune Epoch 5 | Batch 950/3781 | Avg Loss: 1.1413
+Finetune Epoch 5 | Batch 1000/3781 | Avg Loss: 1.1454
+Finetune Epoch 5 | Batch 1050/3781 | Avg Loss: 1.1498
+Finetune Epoch 5 | Batch 1100/3781 | Avg Loss: 1.1493
+Finetune Epoch 5 | Batch 1150/3781 | Avg Loss: 1.1585
+Finetune Epoch 5 | Batch 1200/3781 | Avg Loss: 1.1600
+Finetune Epoch 5 | Batch 1250/3781 | Avg Loss: 1.1639
+Finetune Epoch 5 | Batch 1300/3781 | Avg Loss: 1.1593
+Finetune Epoch 5 | Batch 1350/3781 | Avg Loss: 1.1714
+Finetune Epoch 5 | Batch 1400/3781 | Avg Loss: 1.1715
+Finetune Epoch 5 | Batch 1450/3781 | Avg Loss: 1.1701
+Finetune Epoch 5 | Batch 1500/3781 | Avg Loss: 1.1809
+Finetune Epoch 5 | Batch 1550/3781 | Avg Loss: 1.1874
+Finetune Epoch 5 | Batch 1600/3781 | Avg Loss: 1.1940
+Finetune Epoch 5 | Batch 1650/3781 | Avg Loss: 1.2025
+Finetune Epoch 5 | Batch 1700/3781 | Avg Loss: 1.2037
+Finetune Epoch 5 | Batch 1750/3781 | Avg Loss: 1.2031
+Finetune Epoch 5 | Batch 1800/3781 | Avg Loss: 1.2103
+Finetune Epoch 5 | Batch 1850/3781 | Avg Loss: 1.2139
+Finetune Epoch 5 | Batch 1900/3781 | Avg Loss: 1.2214
+Finetune Epoch 5 | Batch 1950/3781 | Avg Loss: 1.2273
+Finetune Epoch 5 | Batch 2000/3781 | Avg Loss: 1.2326
+Finetune Epoch 5 | Batch 2050/3781 | Avg Loss: 1.2385
+Finetune Epoch 5 | Batch 2100/3781 | Avg Loss: 1.2379
+Finetune Epoch 5 | Batch 2150/3781 | Avg Loss: 1.2415
+Finetune Epoch 5 | Batch 2200/3781 | Avg Loss: 1.2433
+Finetune Epoch 5 | Batch 2250/3781 | Avg Loss: 1.2456
+Finetune Epoch 5 | Batch 2300/3781 | Avg Loss: 1.2454
+Finetune Epoch 5 | Batch 2350/3781 | Avg Loss: 1.2464
+Finetune Epoch 5 | Batch 2400/3781 | Avg Loss: 1.2495
+Finetune Epoch 5 | Batch 2450/3781 | Avg Loss: 1.2534
+Finetune Epoch 5 | Batch 2500/3781 | Avg Loss: 1.2590
+Finetune Epoch 5 | Batch 2550/3781 | Avg Loss: 1.2627
+Finetune Epoch 5 | Batch 2600/3781 | Avg Loss: 1.2636
+Finetune Epoch 5 | Batch 2650/3781 | Avg Loss: 1.2619
+Finetune Epoch 5 | Batch 2700/3781 | Avg Loss: 1.2631
+Finetune Epoch 5 | Batch 2750/3781 | Avg Loss: 1.2623
+Finetune Epoch 5 | Batch 2800/3781 | Avg Loss: 1.2698
+Finetune Epoch 5 | Batch 2850/3781 | Avg Loss: 1.2705
+Finetune Epoch 5 | Batch 2900/3781 | Avg Loss: 1.2747
+Finetune Epoch 5 | Batch 2950/3781 | Avg Loss: 1.2796
+Finetune Epoch 5 | Batch 3000/3781 | Avg Loss: 1.2815
+Finetune Epoch 5 | Batch 3050/3781 | Avg Loss: 1.2818
+Finetune Epoch 5 | Batch 3100/3781 | Avg Loss: 1.2869
+Finetune Epoch 5 | Batch 3150/3781 | Avg Loss: 1.2900
+Finetune Epoch 5 | Batch 3200/3781 | Avg Loss: 1.2912
+Finetune Epoch 5 | Batch 3250/3781 | Avg Loss: 1.2940
+Finetune Epoch 5 | Batch 3300/3781 | Avg Loss: 1.2957
+Finetune Epoch 5 | Batch 3350/3781 | Avg Loss: 1.2997
+Finetune Epoch 5 | Batch 3400/3781 | Avg Loss: 1.3021
+Finetune Epoch 5 | Batch 3450/3781 | Avg Loss: 1.3037
+Finetune Epoch 5 | Batch 3500/3781 | Avg Loss: 1.3038
+Finetune Epoch 5 | Batch 3550/3781 | Avg Loss: 1.3039
+Finetune Epoch 5 | Batch 3600/3781 | Avg Loss: 1.3061
+Finetune Epoch 5 | Batch 3650/3781 | Avg Loss: 1.3082
+Finetune Epoch 5 | Batch 3700/3781 | Avg Loss: 1.3070
+Finetune Epoch 5 | Batch 3750/3781 | Avg Loss: 1.3085
+--- End of Finetune Epoch 5 | Average QA Loss: 1.3071 | LR: 0.000030 ---
+Finetune Epoch 6 | Batch 50/3781 | Avg Loss: 0.8856
+Finetune Epoch 6 | Batch 100/3781 | Avg Loss: 0.8610
+Finetune Epoch 6 | Batch 150/3781 | Avg Loss: 0.8806
+Finetune Epoch 6 | Batch 200/3781 | Avg Loss: 0.8672
+Finetune Epoch 6 | Batch 250/3781 | Avg Loss: 0.9044
+Finetune Epoch 6 | Batch 300/3781 | Avg Loss: 0.9375
+Finetune Epoch 6 | Batch 350/3781 | Avg Loss: 0.9496
+Finetune Epoch 6 | Batch 400/3781 | Avg Loss: 0.9743
+Finetune Epoch 6 | Batch 450/3781 | Avg Loss: 0.9736
+Finetune Epoch 6 | Batch 500/3781 | Avg Loss: 0.9874
+Finetune Epoch 6 | Batch 550/3781 | Avg Loss: 0.9800
+Finetune Epoch 6 | Batch 600/3781 | Avg Loss: 0.9711
+Finetune Epoch 6 | Batch 650/3781 | Avg Loss: 0.9864
+Finetune Epoch 6 | Batch 700/3781 | Avg Loss: 0.9916
+Finetune Epoch 6 | Batch 750/3781 | Avg Loss: 1.0099
+Finetune Epoch 6 | Batch 800/3781 | Avg Loss: 1.0059
+Finetune Epoch 6 | Batch 850/3781 | Avg Loss: 1.0181
+Finetune Epoch 6 | Batch 900/3781 | Avg Loss: 1.0193
+Finetune Epoch 6 | Batch 950/3781 | Avg Loss: 1.0217
+Finetune Epoch 6 | Batch 1000/3781 | Avg Loss: 1.0258
+Finetune Epoch 6 | Batch 1050/3781 | Avg Loss: 1.0314
+Finetune Epoch 6 | Batch 1100/3781 | Avg Loss: 1.0295
+Finetune Epoch 6 | Batch 1150/3781 | Avg Loss: 1.0289
+Finetune Epoch 6 | Batch 1200/3781 | Avg Loss: 1.0292
+Finetune Epoch 6 | Batch 1250/3781 | Avg Loss: 1.0347
+Finetune Epoch 6 | Batch 1300/3781 | Avg Loss: 1.0367
+Finetune Epoch 6 | Batch 1350/3781 | Avg Loss: 1.0435
+Finetune Epoch 6 | Batch 1400/3781 | Avg Loss: 1.0448
+Finetune Epoch 6 | Batch 1450/3781 | Avg Loss: 1.0428
+Finetune Epoch 6 | Batch 1500/3781 | Avg Loss: 1.0473
+Finetune Epoch 6 | Batch 1550/3781 | Avg Loss: 1.0488
+Finetune Epoch 6 | Batch 1600/3781 | Avg Loss: 1.0518
+Finetune Epoch 6 | Batch 1650/3781 | Avg Loss: 1.0501
+Finetune Epoch 6 | Batch 1700/3781 | Avg Loss: 1.0535
+Finetune Epoch 6 | Batch 1750/3781 | Avg Loss: 1.0580
+Finetune Epoch 6 | Batch 1800/3781 | Avg Loss: 1.0589
+Finetune Epoch 6 | Batch 1850/3781 | Avg Loss: 1.0634
+Finetune Epoch 6 | Batch 1900/3781 | Avg Loss: 1.0674
+Finetune Epoch 6 | Batch 1950/3781 | Avg Loss: 1.0672
+Finetune Epoch 6 | Batch 2000/3781 | Avg Loss: 1.0662
+Finetune Epoch 6 | Batch 2050/3781 | Avg Loss: 1.0699
+Finetune Epoch 6 | Batch 2100/3781 | Avg Loss: 1.0747
+Finetune Epoch 6 | Batch 2150/3781 | Avg Loss: 1.0727
+Finetune Epoch 6 | Batch 2200/3781 | Avg Loss: 1.0783
+Finetune Epoch 6 | Batch 2250/3781 | Avg Loss: 1.0827
+Finetune Epoch 6 | Batch 2300/3781 | Avg Loss: 1.0892
+Finetune Epoch 6 | Batch 2350/3781 | Avg Loss: 1.0918
+Finetune Epoch 6 | Batch 2400/3781 | Avg Loss: 1.0904
+Finetune Epoch 6 | Batch 2450/3781 | Avg Loss: 1.0932
+Finetune Epoch 6 | Batch 2500/3781 | Avg Loss: 1.0930
+Finetune Epoch 6 | Batch 2550/3781 | Avg Loss: 1.0983
+Finetune Epoch 6 | Batch 2600/3781 | Avg Loss: 1.0996
+Finetune Epoch 6 | Batch 2650/3781 | Avg Loss: 1.1022
+Finetune Epoch 6 | Batch 2700/3781 | Avg Loss: 1.1088
+Finetune Epoch 6 | Batch 2750/3781 | Avg Loss: 1.1081
+Finetune Epoch 6 | Batch 2800/3781 | Avg Loss: 1.1117
+Finetune Epoch 6 | Batch 2850/3781 | Avg Loss: 1.1163
+Finetune Epoch 6 | Batch 2900/3781 | Avg Loss: 1.1201
+Finetune Epoch 6 | Batch 2950/3781 | Avg Loss: 1.1222
+Finetune Epoch 6 | Batch 3000/3781 | Avg Loss: 1.1227
+Finetune Epoch 6 | Batch 3050/3781 | Avg Loss: 1.1200
+Finetune Epoch 6 | Batch 3100/3781 | Avg Loss: 1.1248
+Finetune Epoch 6 | Batch 3150/3781 | Avg Loss: 1.1225
+Finetune Epoch 6 | Batch 3200/3781 | Avg Loss: 1.1277
+Finetune Epoch 6 | Batch 3250/3781 | Avg Loss: 1.1314
+Finetune Epoch 6 | Batch 3300/3781 | Avg Loss: 1.1336
+Finetune Epoch 6 | Batch 3350/3781 | Avg Loss: 1.1370
+Finetune Epoch 6 | Batch 3400/3781 | Avg Loss: 1.1395
+Finetune Epoch 6 | Batch 3450/3781 | Avg Loss: 1.1412
+Finetune Epoch 6 | Batch 3500/3781 | Avg Loss: 1.1443
+Finetune Epoch 6 | Batch 3550/3781 | Avg Loss: 1.1479
+Finetune Epoch 6 | Batch 3600/3781 | Avg Loss: 1.1470
+Finetune Epoch 6 | Batch 3650/3781 | Avg Loss: 1.1498
+Finetune Epoch 6 | Batch 3700/3781 | Avg Loss: 1.1506
+Finetune Epoch 6 | Batch 3750/3781 | Avg Loss: 1.1503
+--- End of Finetune Epoch 6 | Average QA Loss: 1.1506 | LR: 0.000030 ---
+
+Fine-tuning finished.
+Fine-tuned QA model state_dict saved to models/BaseQA_20250901-200522/toy_llm_qasrl_finetuned.pth
+Final Training Set Accuracy: 0.6120 | Final F1: 0.7072
+Final training statistics saved to 'models/BaseQA_20250901-200522/finetune_stats.json'
+
+--- Running Validation Metrics on QA-SRL Validation Set for 'BaseQA' model ---
+Loaded finetuned model from models/BaseQA_20250901-200522/toy_llm_qasrl_finetuned.pth for validation.
+Loading and processing qa_srl dataset for 'validation' split...
+Finished processing 'validation'. Found 2571 valid QA examples.
+Final Validation Accuracy: 0.1272 | Final Validation F1: 0.3024
+Validation statistics saved to 'models/BaseQA_20250901-200522/validation_stats.json'
+Script finished.

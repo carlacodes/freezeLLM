@@ -9,6 +9,8 @@ from datasets import load_dataset, load_from_disk
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer
+import argparse # NEW: For command-line arguments
+
 DATASET_PATH = "/home/zceccgr/Scratch/downloaded_datasets/qa_srl"
 
 
@@ -491,9 +493,35 @@ def finetune_qa_epoch(model, dataloader, optimizer, device, epoch_num, log_inter
 
 
 if __name__ == "__main__":
+    # --- NEW: Argument Parsing ---
+    parser = argparse.ArgumentParser(description="Pre-train and fine-tune a ToyLLM.")
+    parser.add_argument(
+        '--config_path', 
+        type=str, 
+        default='/home/zceccgr/Scratch/freezeLLM/llm_scale_up/config.json', 
+        help='Path to the configuration JSON file.'
+    )
+    parser.add_argument(
+        '--config_name', 
+        type=str, 
+        default='base', 
+        choices=['tiny', 'small', 'base'], 
+        help='The name of the configuration to use from the JSON file.'
+    )
+    args = parser.parse_args()
+
+    # --- NEW: Load Configuration ---
+    with open(args.config_path, 'r') as f:
+        all_configs = json.load(f)
+    
+    config = all_configs[args.config_name]
+    llm_params = config['llm_config']
+    train_params = config['training_params']
+    print(f"--- Loaded configuration '{args.config_name}' from '{args.config_path}' ---")
+
+    # --- Set up parameters from config ---
     SKIP_PRETRAIN = False
     SKIP_FINETUNE = False
-
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {DEVICE}")
 
@@ -505,39 +533,33 @@ if __name__ == "__main__":
     print(f"Standard vocabulary size: {VOCAB_SIZE}")
     print(f"PAD token ID: {PAD_TOKEN_ID}")
 
-    # --- Model and Training Config ---
-    tiny_config = LLMConfig(name="TinyQA", n_layers=2, hidden_size=128, n_heads=2)
-    MAX_SEQ_LEN = 256
-    DROPOUT_RATE = 0.1
-    PRETRAIN_LR = 3e-4
-    NUM_PRETRAIN_EPOCHS = 100  # Set a high number, early stopping will find the best
-    PRETRAIN_PATIENCE = 5  # Early stopping patience
-    WARMUP_STEPS = 500  # Number of warm-up steps for the learning rate
-
+    # --- Instantiate Model from Config ---
+    model_config = LLMConfig(**llm_params)
     base_llm = ToyLLM(
-        config=tiny_config,
+        config=model_config,
         vocab_size=VOCAB_SIZE,
-        max_seq_len=MAX_SEQ_LEN,
+        max_seq_len=train_params['max_seq_len'],
         pad_token_id=PAD_TOKEN_ID,
-        dropout_rate=DROPOUT_RATE,
+        dropout_rate=train_params['dropout_rate'],
     )
 
     num_params = sum(p.numel() for p in base_llm.parameters() if p.requires_grad)
     print(
-        f"Instantiated Base Model: {tiny_config.name} with {num_params:,} trainable parameters."
+        f"Instantiated Base Model: {model_config.name} with {num_params:,} trainable parameters."
     )
 
     date_now = time.strftime("%Y%m%d-%H%M%S")
-    NUM_FINETUNE_EPOCHS = 6
-    PRETRAINED_MODEL_PATH = f"models/date_{date_now}/toy_llm_unified_pretrained.pth"
-    FINETUNED_MODEL_PATH = f"models/date_{date_now}/toy_llm_qasrl_finetuned.pth"
+    # --- Paths based on model name ---
+    model_dir = f"models/{model_config.name}_{date_now}"
+    PRETRAINED_MODEL_PATH = os.path.join(model_dir, "toy_llm_unified_pretrained.pth")
+    FINETUNED_MODEL_PATH = os.path.join(model_dir, "toy_llm_qasrl_finetuned.pth")
 
     os.makedirs(os.path.dirname(PRETRAINED_MODEL_PATH), exist_ok=True)
     os.makedirs(os.path.dirname(FINETUNED_MODEL_PATH), exist_ok=True)
     print(f"Best pre-trained model will be saved to: {PRETRAINED_MODEL_PATH}")
 
     if not SKIP_PRETRAIN:
-        print("\n--- Starting CLM Pre-training on nq_open ---")
+        print(f"\n--- Starting CLM Pre-training on nq_open for '{model_config.name}' model ---")
         pretrain_model = ToyLLMForPretraining(base_llm).to(DEVICE)
 
         dataset_loader_main = NQOpenDataset()
@@ -547,25 +569,24 @@ if __name__ == "__main__":
         train_data_list = [line for line in train_iter_raw if line.strip()]
         valid_data_list = [line for line in valid_iter_raw if line.strip()]
 
-        BATCH_SIZE_PRETRAIN = 16
         collate_fn_clm = lambda batch: collate_batch_clm(
-            batch, tokenizer, MAX_SEQ_LEN, DEVICE
+            batch, tokenizer, train_params['max_seq_len'], DEVICE
         )
         train_dataloader_clm = DataLoader(
             train_data_list,
-            batch_size=BATCH_SIZE_PRETRAIN,
+            batch_size=train_params['batch_size_pretrain'],
             shuffle=True,
             collate_fn=collate_fn_clm,
         )
         val_dataloader_clm = DataLoader(
             valid_data_list,
-            batch_size=BATCH_SIZE_PRETRAIN,
+            batch_size=train_params['batch_size_pretrain'],
             shuffle=False,
             collate_fn=collate_fn_clm,
         )
 
         optimizer_pretrain = optim.AdamW(
-            pretrain_model.parameters(), lr=PRETRAIN_LR, weight_decay=0.1
+            pretrain_model.parameters(), lr=train_params['pretrain_lr'], weight_decay=0.1
         )
         scheduler_pretrain = ReduceLROnPlateau(
             optimizer_pretrain,
@@ -579,7 +600,7 @@ if __name__ == "__main__":
         epochs_no_improve = 0
         global_step = 0
 
-        for epoch in range(1, NUM_PRETRAIN_EPOCHS + 1):
+        for epoch in range(1, train_params['num_pretrain_epochs'] + 1):
             pretrain_model.train()
             total_train_loss = 0
 
@@ -591,10 +612,10 @@ if __name__ == "__main__":
                     continue
 
                 # --- LR Warm-up Logic ---
-                if global_step < WARMUP_STEPS:
-                    lr_scale = global_step / WARMUP_STEPS
+                if global_step < train_params['warmup_steps']:
+                    lr_scale = global_step / train_params['warmup_steps']
                     for param_group in optimizer_pretrain.param_groups:
-                        param_group["lr"] = lr_scale * PRETRAIN_LR
+                        param_group["lr"] = lr_scale * train_params['pretrain_lr']
 
                 optimizer_pretrain.zero_grad()
                 output_logits = pretrain_model(
@@ -631,9 +652,9 @@ if __name__ == "__main__":
             else:
                 epochs_no_improve += 1
 
-            if epochs_no_improve >= PRETRAIN_PATIENCE:
+            if epochs_no_improve >= train_params['pretrain_patience']:
                 print(
-                    f"\nEarly stopping triggered after {PRETRAIN_PATIENCE} epochs without improvement."
+                    f"\nEarly stopping triggered after {train_params['pretrain_patience']} epochs without improvement."
                 )
                 break
 
@@ -688,7 +709,7 @@ if __name__ == "__main__":
         )
 
     if not SKIP_FINETUNE:
-        print("\n--- Starting Fine-tuning on QA-SRL ---")
+        print(f"\n--- Starting Fine-tuning on QA-SRL for '{model_config.name}' model ---")
         qa_model = ToyLLMForQuestionAnswering(base_llm).to(DEVICE)
         try:
             pretrained_dict = torch.load(PRETRAINED_MODEL_PATH, map_location=DEVICE)
@@ -707,25 +728,24 @@ if __name__ == "__main__":
             print(f"Error loading pre-trained weights: {e}")
             print("Fine-tuning will start from randomly initialized weights.")
 
-        BATCH_SIZE_QA = 8
         qa_train_dataset = QASRLDataset(
-            split="train", tokenizer=tokenizer, max_seq_len=MAX_SEQ_LEN
+            split="train", tokenizer=tokenizer, max_seq_len=train_params['max_seq_len']
         )
         qa_train_dataloader = DataLoader(
             qa_train_dataset,
-            batch_size=BATCH_SIZE_QA,
+            batch_size=train_params['batch_size_qa'],
             shuffle=True,
             collate_fn=collate_batch_qa,
         )
 
-        optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=5e-5)
+        optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=train_params['finetune_lr'])
         scheduler_finetune = ReduceLROnPlateau(
             optimizer_finetune, mode="min", factor=0.5, patience=2
         )
 
-        print(f"Starting fine-tuning for {NUM_FINETUNE_EPOCHS} epochs...")
+        print(f"Starting fine-tuning for {train_params['num_finetune_epochs']} epochs...")
         avg_epoch_loss = 0.0
-        for epoch_num in range(1, NUM_FINETUNE_EPOCHS + 1):
+        for epoch_num in range(1, train_params['num_finetune_epochs'] + 1):
             avg_epoch_loss = finetune_qa_epoch(
                 qa_model, qa_train_dataloader, optimizer_finetune, DEVICE, epoch_num
             )
@@ -746,19 +766,19 @@ if __name__ == "__main__":
         )
         stats = {
             "pretrain_epochs": "skipped" if SKIP_PRETRAIN else epoch,
-            "finetune_epochs": NUM_FINETUNE_EPOCHS,
+            "finetune_epochs": train_params['num_finetune_epochs'],
             "final_loss": avg_epoch_loss,
             "final_accuracy": final_acc,
             "final_f1": final_f1,
         }
-        stats_path = f"models/date_{date_now}/finetune_stats.json"
+        stats_path = os.path.join(model_dir, "finetune_stats.json")
         with open(stats_path, "w") as f:
             json.dump(stats, f, indent=2)
         print(f"Final training statistics saved to '{stats_path}'")
     else:
         print("Skipping fine-tuning step.")
 
-    print("\n--- Running Validation Metrics on QA-SRL Validation Set ---")
+    print(f"\n--- Running Validation Metrics on QA-SRL Validation Set for '{model_config.name}' model ---")
     qa_model_for_eval = ToyLLMForQuestionAnswering(base_llm).to(DEVICE)
     try:
         if os.path.exists(FINETUNED_MODEL_PATH):
@@ -785,13 +805,12 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Error loading model weights for validation: {e}. Using random weights.")
 
-    BATCH_SIZE_QA = 8
     qa_val_dataset = QASRLDataset(
-        split="validation", tokenizer=tokenizer, max_seq_len=MAX_SEQ_LEN
+        split="validation", tokenizer=tokenizer, max_seq_len=train_params['max_seq_len']
     )
     qa_val_dataloader = DataLoader(
         qa_val_dataset,
-        batch_size=BATCH_SIZE_QA,
+        batch_size=train_params['batch_size_qa'],
         shuffle=False,
         collate_fn=collate_batch_qa,
     )
@@ -800,7 +819,7 @@ if __name__ == "__main__":
     print(
         f"Final Validation Accuracy: {val_acc:.4f} | Final Validation F1: {val_f1:.4f}"
     )
-    val_stats_path = f"models/date_{date_now}/validation_stats.json"
+    val_stats_path = os.path.join(model_dir, "validation_stats.json")
     with open(val_stats_path, "w") as f:
         json.dump(
             {
