@@ -9,7 +9,7 @@ from datasets import load_dataset, load_from_disk
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer
-import argparse # NEW: For command-line arguments
+import argparse
 
 DATASET_PATH = "/home/zceccgr/Scratch/downloaded_datasets/qa_srl"
 
@@ -336,8 +336,9 @@ class NQOpenDataset:
             question = item.get("question", "").strip()
             answer = item.get("answer", [])
             if question and answer:
-                # For simplicity, we concatenate the question with the first answer.
-                yield f"{question} {answer[0]}"
+                # --- MODIFIED ---
+                # A slightly better format for pre-training that gives the model more structure.
+                yield f"Question: {question} Answer: {answer[0]}"
 
     def __call__(self) -> Tuple[Iterator[str], Iterator[str]]:
         train_hf_ds = load_dataset(
@@ -491,29 +492,56 @@ def finetune_qa_epoch(model, dataloader, optimizer, device, epoch_num, log_inter
             )
     return total_loss / len(dataloader)
 
+# --- NEW FUNCTION ---
+def validate_qa_epoch(model, dataloader, device):
+    """Runs a validation loop for one epoch during fine-tuning."""
+    model.eval()  # Set model to evaluation mode
+    total_loss = 0
+    with torch.no_grad():  # No gradients needed
+        for input_ids, attention_mask, start_pos, end_pos in dataloader:
+            input_ids, attention_mask, start_pos, end_pos = (
+                input_ids.to(device),
+                attention_mask.to(device),
+                start_pos.to(device),
+                end_pos.to(device),
+            )
+            loss, _, _ = model(
+                input_ids,
+                attention_mask=attention_mask,
+                start_positions=start_pos,
+                end_positions=end_pos,
+            )
+            if loss is not None:
+                total_loss += loss.item()
+
+    # Also calculate accuracy/F1 here for better insights
+    val_acc, val_f1 = evaluate_qa_metrics(model, dataloader, device)
+
+    avg_loss = total_loss / len(dataloader) if len(dataloader) > 0 else 0
+    return avg_loss, val_acc, val_f1
+
 
 if __name__ == "__main__":
     # --- NEW: Argument Parsing ---
     parser = argparse.ArgumentParser(description="Pre-train and fine-tune a ToyLLM.")
     parser.add_argument(
-        '--config_path', 
-        type=str, 
-        default='/home/zceccgr/Scratch/freezeLLM/llm_scale_up/config.json', 
+        '--config_path',
+        type=str,
+        default='/home/zceccgr/Scratch/freezeLLM/llm_scale_up/config.json',
         help='Path to the configuration JSON file.'
     )
     parser.add_argument(
-        '--config_name', 
-        type=str, 
-        default='base', 
-        choices=['tiny', 'small', 'base'], 
+        '--config_name',
+        type=str,
+        default='tiny',
+        choices=['tiny', 'small', 'base', 'medium'],
         help='The name of the configuration to use from the JSON file.'
     )
     args = parser.parse_args()
 
-    # --- NEW: Load Configuration ---
     with open(args.config_path, 'r') as f:
         all_configs = json.load(f)
-    
+
     config = all_configs[args.config_name]
     llm_params = config['llm_config']
     train_params = config['training_params']
@@ -696,7 +724,7 @@ if __name__ == "__main__":
 
             return tokenizer.decode(input_ids[0], skip_special_tokens=True)
 
-        test_prompt = "where was the statue of liberty originally built"
+        test_prompt = "Question: where was the statue of liberty originally built"
         print("\nTesting prompt completion after pretraining:")
         print(f"Prompt: '{test_prompt}'")
         completion = simple_generate(
@@ -737,29 +765,61 @@ if __name__ == "__main__":
             shuffle=True,
             collate_fn=collate_batch_qa,
         )
+        
+        # --- MODIFIED: Create Validation DataLoader for fine-tuning ---
+        qa_val_dataset = QASRLDataset(
+            split="validation", tokenizer=tokenizer, max_seq_len=train_params['max_seq_len']
+        )
+        qa_val_dataloader = DataLoader(
+            qa_val_dataset,
+            batch_size=train_params['batch_size_qa'],
+            shuffle=False,
+            collate_fn=collate_batch_qa,
+        )
 
-        optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=train_params['finetune_lr'])
+        optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=train_params['finetune_lr'],  weight_decay=0.01)
         scheduler_finetune = ReduceLROnPlateau(
             optimizer_finetune, mode="min", factor=0.5, patience=2
         )
 
         print(f"Starting fine-tuning for {train_params['num_finetune_epochs']} epochs...")
-        avg_epoch_loss = 0.0
+        
+        # --- MODIFIED: Track best validation loss to save the best model ---
+        best_val_loss = float("inf")
+        final_train_loss = 0.0
+
         for epoch_num in range(1, train_params['num_finetune_epochs'] + 1):
-            avg_epoch_loss = finetune_qa_epoch(
+            avg_train_loss = finetune_qa_epoch(
                 qa_model, qa_train_dataloader, optimizer_finetune, DEVICE, epoch_num
             )
-            scheduler_finetune.step(avg_epoch_loss)
+            final_train_loss = avg_train_loss
+            
+            # --- MODIFIED: Run validation at the end of each epoch ---
+            avg_val_loss, val_acc, val_f1 = validate_qa_epoch(qa_model, qa_val_dataloader, DEVICE)
+            
+            # --- MODIFIED: Step the scheduler based on validation loss ---
+            scheduler_finetune.step(avg_val_loss)
+            
+            current_lr = optimizer_finetune.param_groups[0]['lr']
             print(
-                f"--- End of Finetune Epoch {epoch_num} | Average QA Loss: {avg_epoch_loss:.4f} "
-                f"| LR: {scheduler_finetune.optimizer.param_groups[0]['lr']:.6f} ---"
+                f"--- End of Finetune Epoch {epoch_num} | Train Loss: {avg_train_loss:.4f} | "
+                f"Val Loss: {avg_val_loss:.4f} | Val Acc: {val_acc:.4f} | Val F1: {val_f1:.4f} "
+                f"| LR: {current_lr:.6f} ---"
             )
 
-        print("\nFine-tuning finished.")
-        torch.save(qa_model.state_dict(), FINETUNED_MODEL_PATH)
-        print(f"Fine-tuned QA model state_dict saved to {FINETUNED_MODEL_PATH}")
+            # --- MODIFIED: Save the model only if validation loss improves ---
+            if avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
+                torch.save(qa_model.state_dict(), FINETUNED_MODEL_PATH)
+                print(f"Validation loss improved. Saving best model to {FINETUNED_MODEL_PATH}")
 
-        # The mock evaluate_qa_metrics will run here if the original is not found
+        print("\nFine-tuning finished.")
+        print(f"Best fine-tuned QA model state_dict saved to {FINETUNED_MODEL_PATH}")
+
+        # --- MODIFIED: Load the *best* model before final evaluation ---
+        print(f"Loading best model from {FINETUNED_MODEL_PATH} for final stats.")
+        qa_model.load_state_dict(torch.load(FINETUNED_MODEL_PATH))
+
         final_acc, final_f1 = evaluate_qa_metrics(qa_model, qa_train_dataloader, DEVICE)
         print(
             f"Final Training Set Accuracy: {final_acc:.4f} | Final F1: {final_f1:.4f}"
@@ -767,9 +827,10 @@ if __name__ == "__main__":
         stats = {
             "pretrain_epochs": "skipped" if SKIP_PRETRAIN else epoch,
             "finetune_epochs": train_params['num_finetune_epochs'],
-            "final_loss": avg_epoch_loss,
-            "final_accuracy": final_acc,
-            "final_f1": final_f1,
+            "final_train_loss": final_train_loss,
+            "best_validation_loss": best_val_loss,
+            "final_train_accuracy": final_acc,
+            "final_train_f1": final_f1,
         }
         stats_path = os.path.join(model_dir, "finetune_stats.json")
         with open(stats_path, "w") as f:
@@ -785,7 +846,8 @@ if __name__ == "__main__":
             qa_model_for_eval.load_state_dict(
                 torch.load(FINETUNED_MODEL_PATH, map_location=DEVICE)
             )
-            print(f"Loaded finetuned model from {FINETUNED_MODEL_PATH} for validation.")
+            print(f"Loaded BEST finetuned model from {FINETUNED_MODEL_PATH} for validation.")
+        # This part of the logic remains as a fallback
         elif os.path.exists(PRETRAINED_MODEL_PATH):
             pretrained_dict = torch.load(PRETRAINED_MODEL_PATH, map_location=DEVICE)
             qa_model_for_eval.llm.load_state_dict(
@@ -805,15 +867,18 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Error loading model weights for validation: {e}. Using random weights.")
 
-    qa_val_dataset = QASRLDataset(
-        split="validation", tokenizer=tokenizer, max_seq_len=train_params['max_seq_len']
-    )
-    qa_val_dataloader = DataLoader(
-        qa_val_dataset,
-        batch_size=train_params['batch_size_qa'],
-        shuffle=False,
-        collate_fn=collate_batch_qa,
-    )
+    # This dataloader is now created earlier, but we can re-use it.
+    # If not, it's fine to create it again.
+    if 'qa_val_dataloader' not in locals():
+        qa_val_dataset = QASRLDataset(
+            split="validation", tokenizer=tokenizer, max_seq_len=train_params['max_seq_len']
+        )
+        qa_val_dataloader = DataLoader(
+            qa_val_dataset,
+            batch_size=train_params['batch_size_qa'],
+            shuffle=False,
+            collate_fn=collate_batch_qa,
+        )
 
     val_acc, val_f1 = evaluate_qa_metrics(qa_model_for_eval, qa_val_dataloader, DEVICE)
     print(
