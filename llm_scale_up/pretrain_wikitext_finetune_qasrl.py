@@ -616,7 +616,8 @@ if __name__ == "__main__":
                 optimizer_pretrain.step()
                 total_train_loss += loss.item()
 
-            avg_train_loss = total_train_loss / len(train_dataloader_clm)
+            avg_train_loss = total_train_loss / (batch_idx + 1)
+
             avg_val_loss = validate_pretrain_epoch(
                 pretrain_model, val_dataloader_clm, criterion_clm, DEVICE
             )
