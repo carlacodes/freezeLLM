@@ -2,17 +2,14 @@ import json
 import os
 import time
 from typing import Iterator, Tuple
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from datasets import load_dataset, load_from_disk
+from datasets import load_dataset
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils.data import DataLoader, Dataset, IterableDataset
+from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer
-import argparse
-
-DATASET_PATH = "/home/zceccgr/Scratch/downloaded_datasets/qa_srl"
-
 
 try:
     from llm_scale_up.utils.eval_metrics import evaluate_qa_metrics
@@ -23,6 +20,9 @@ except ImportError:
         # Mock function returns dummy values if the original is not available
         print("Mock evaluation: Returning 0.0 for accuracy and F1.")
         return 0.0, 0.0
+
+
+# need to modularise this later
 
 
 class LLMConfig:
@@ -54,8 +54,6 @@ class LLMConfig:
 
 
 class ToyMultiHeadAttention(nn.Module):
-    """Multi-Head Attention module for the ToyLLM."""
-
     def __init__(self, hidden_size: int, n_heads: int):
         super().__init__()
         assert hidden_size % n_heads == 0
@@ -75,12 +73,14 @@ class ToyMultiHeadAttention(nn.Module):
 
         att_scores = (q_h @ k_h.transpose(-2, -1)) * (self.head_dim**-0.5)
 
+        # Apply causal mask if requested
         if is_causal:
             causal_mask = torch.triu(torch.ones_like(att_scores), diagonal=1).bool()
             att_scores = att_scores.masked_fill(causal_mask, float("-inf"))
 
         if attention_mask is not None:
             if attention_mask.dim() == 2:
+                # This unsqueeze is for the padding mask
                 attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
             att_scores = att_scores.masked_fill(attention_mask == 0, float("-inf"))
 
@@ -90,8 +90,6 @@ class ToyMultiHeadAttention(nn.Module):
 
 
 class ToyFeedForward(nn.Module):
-    """Feed-forward network module."""
-
     def __init__(
         self, hidden_size: int, ffn_hidden_size: int, dropout_rate: float = 0.1
     ):
@@ -106,8 +104,6 @@ class ToyFeedForward(nn.Module):
 
 
 class ToyTransformerBlock(nn.Module):
-    """A single Transformer block combining attention and a feed-forward network."""
-
     def __init__(
         self,
         hidden_size: int,
@@ -182,10 +178,12 @@ class ToyLLM(nn.Module):
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.padding_idx is not None:
+            padding_idx = module.padding_idx
+            temp_weight = torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if padding_idx is not None:
                 with torch.no_grad():
-                    module.weight[module.padding_idx].fill_(0)
+                    temp_weight[padding_idx].fill_(0)
+            module.weight.data = temp_weight
 
     def forward(self, input_ids, attention_mask=None, is_causal=False):
         batch_size, seq_len = input_ids.shape
@@ -265,14 +263,18 @@ class ToyLLMForPretraining(nn.Module):
 
 def create_clm_inputs_and_labels(token_ids, pad_token_id):
     """Creates inputs and labels for Causal Language Modeling."""
+    # Input is the sequence, except for the last token
     inputs = token_ids[:, :-1].contiguous()
+    # Use .clone() to create a new copy of the data for labels
     labels = token_ids[:, 1:].clone().contiguous()
+
+    # This modification now only affects the 'labels' tensor and won't corrupt 'inputs'
     labels[labels == pad_token_id] = -100
     return inputs, labels
 
 
 def collate_batch_clm(batch, tokenizer, max_seq_len, device):
-    """Collates a batch of text for Causal Language Modeling."""
+    """Collates a batch of text for Causal Language Modeling using a Hugging Face tokenizer."""
     tokenized_texts = tokenizer(
         batch,
         add_special_tokens=True,
@@ -285,10 +287,12 @@ def collate_batch_clm(batch, tokenizer, max_seq_len, device):
     if tokenized_texts["input_ids"].nelement() == 0:
         return None, None, None
 
+    # Use the create_clm_inputs_and_labels function to prepare model inputs
     clm_inputs, clm_labels = create_clm_inputs_and_labels(
         tokenized_texts["input_ids"], tokenizer.pad_token_id
     )
 
+    # The attention mask needs to correspond to the `clm_inputs`, so we slice it.
     attention_mask = tokenized_texts["attention_mask"][:, :-1].contiguous()
 
     return (
@@ -300,9 +304,9 @@ def collate_batch_clm(batch, tokenizer, max_seq_len, device):
 
 def validate_pretrain_epoch(model, dataloader, criterion, device):
     """Runs a validation loop for one epoch during pre-training."""
-    model.eval()
+    model.eval()  # Set the model to evaluation mode
     total_loss = 0
-    with torch.no_grad():
+    with torch.no_grad():  # Disable gradient calculation
         for clm_inputs, clm_labels, attention_masks in dataloader:
             if clm_inputs is None:
                 continue
@@ -316,33 +320,39 @@ def validate_pretrain_epoch(model, dataloader, criterion, device):
     return total_loss / len(dataloader) if len(dataloader) > 0 else 0
 
 
-class NQOpenDataset(IterableDataset):
-    """
-    Dataset class for nq_open. Implemented as an IterableDataset to stream data
-    and avoid loading the entire dataset into memory.
-    """
+class NQOpenDataset:
+    """Dataset class for nq_open from Google Research."""
 
     DATASET_NAME = "nq_open"
 
-    def __init__(self, split: str, cache_dir: str = None):
-        self.split = split
+    def __init__(self, cache_dir: str = None):
         self.cache_dir = cache_dir
-        self.dataset = load_dataset(self.DATASET_NAME, split=self.split, cache_dir=self.cache_dir)
 
-    def __iter__(self):
-        for item in self.dataset:
+    def _hf_dataset_to_qa_iterator(self, hf_split_dataset) -> Iterator[str]:
+        for item in hf_split_dataset:
             question = item.get("question", "").strip()
             answer = item.get("answer", [])
             if question and answer:
-                yield f"Question: {question} Answer: {answer[0]}"
+                # For simplicity, we concatenate the question with the first answer.
+                yield f"{question} {answer[0]}"
+
+    def __call__(self) -> Tuple[Iterator[str], Iterator[str]]:
+        train_hf_ds = load_dataset(
+            self.DATASET_NAME, split="train", cache_dir=self.cache_dir
+        )
+        validation_hf_ds = load_dataset(
+            self.DATASET_NAME, split="validation", cache_dir=self.cache_dir
+        )
+        return (
+            self._hf_dataset_to_qa_iterator(train_hf_ds),
+            self._hf_dataset_to_qa_iterator(validation_hf_ds),
+        )
 
 
 class QASRLDataset(Dataset):
-    """Dataset class for fine-tuning on qa_srl."""
-
     def __init__(self, split, tokenizer, max_seq_len):
         print(f"Loading and processing qa_srl dataset for '{split}' split...")
-        self.dataset = load_from_disk(DATASET_PATH)[split]
+        self.dataset = load_dataset("qa_srl", split=split, trust_remote_code=True)
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
         self.processed_data = self._preprocess()
@@ -351,46 +361,60 @@ class QASRLDataset(Dataset):
         processed = []
         for example in self.dataset:
             context = example["sentence"]
+            # Reconstruct question, skipping placeholder "_"
             question = " ".join(
                 [token for token in example["question"] if token != "_"]
             )
+
+            # Some answers might be empty or invalid, skip them
             if not example.get("answers"):
                 continue
 
             for answer_text in example["answers"]:
+                # Find the character start and end positions of the answer
                 char_start = context.lower().find(answer_text.lower())
                 if char_start == -1:
                     continue
                 char_end = char_start + len(answer_text)
 
+                # Tokenize the context and question together
                 encoding = self.tokenizer(
                     question,
                     context,
-                    truncation="only_second",
+                    truncation="only_second",  # Truncate context if needed
                     max_length=self.max_seq_len,
-                    stride=128,
+                    stride=128,  # Allow for overlapping context
                     return_overflowing_tokens=True,
                     return_offsets_mapping=True,
                     padding="max_length",
                 )
 
+                # Find the token indices that correspond to the answer span
                 for i in range(len(encoding["input_ids"])):
                     sequence_ids = encoding.sequence_ids(i)
+                    # The context is the second part of the sequence (id 1)
                     context_indices = [
                         idx for idx, sid in enumerate(sequence_ids) if sid == 1
                     ]
+
                     if not context_indices:
                         continue
+
+                    # Get the start and end character positions for each token in the context
                     offset_mapping = encoding["offset_mapping"][i]
+                    context_offsets = [offset_mapping[j] for j in context_indices]
+
                     token_start_index = -1
                     token_end_index = -1
 
-                    for idx, (start, end) in zip(context_indices, offset_mapping):
+                    # Find the start and end tokens of our answer
+                    for idx, (start, end) in zip(context_indices, context_offsets):
                         if start <= char_start < end:
                             token_start_index = idx
                         if start < char_end <= end:
                             token_end_index = idx
 
+                    # If we found a valid span
                     if token_start_index != -1 and token_end_index != -1:
                         processed.append(
                             {
@@ -408,7 +432,9 @@ class QASRLDataset(Dataset):
                                 ),
                             }
                         )
+                        # We only add the first valid span found for this answer
                         break
+
         print(
             f"Finished processing '{self.dataset.split}'. Found {len(processed)} valid QA examples."
         )
@@ -462,62 +488,14 @@ def finetune_qa_epoch(model, dataloader, optimizer, device, epoch_num, log_inter
     return total_loss / len(dataloader)
 
 
-def validate_qa_epoch(model, dataloader, device):
-    """Runs a validation loop for one epoch during fine-tuning."""
-    model.eval()
-    total_loss = 0
-    with torch.no_grad():
-        for input_ids, attention_mask, start_pos, end_pos in dataloader:
-            input_ids, attention_mask, start_pos, end_pos = (
-                input_ids.to(device),
-                attention_mask.to(device),
-                start_pos.to(device),
-                end_pos.to(device),
-            )
-            loss, _, _ = model(
-                input_ids,
-                attention_mask=attention_mask,
-                start_positions=start_pos,
-                end_positions=end_pos,
-            )
-            if loss is not None:
-                total_loss += loss.item()
-
-    val_acc, val_f1 = evaluate_qa_metrics(model, dataloader, device)
-    avg_loss = total_loss / len(dataloader) if len(dataloader) > 0 else 0
-    return avg_loss, val_acc, val_f1
-
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Pre-train and fine-tune a ToyLLM.")
-    parser.add_argument(
-        '--config_path',
-        type=str,
-        default='/home/zceccgr/Scratch/freezeLLM/llm_scale_up/config.json',
-        help='Path to the configuration JSON file.'
-    )
-    parser.add_argument(
-        '--config_name',
-        type=str,
-        default='tiny',
-        choices=['tiny', 'small', 'base', 'medium'],
-        help='The name of the configuration to use from the JSON file.'
-    )
-    args = parser.parse_args()
-
-    with open(args.config_path, 'r') as f:
-        all_configs = json.load(f)
-
-    config = all_configs[args.config_name]
-    llm_params = config['llm_config']
-    train_params = config['training_params']
-    print(f"--- Loaded configuration '{args.config_name}' from '{args.config_path}' ---")
-
     SKIP_PRETRAIN = False
     SKIP_FINETUNE = False
+
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {DEVICE}")
 
+    # --- Use a Standard Tokenizer ---
     print("Loading standard tokenizer ('bert-base-uncased')...")
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
     VOCAB_SIZE = tokenizer.vocab_size
@@ -525,53 +503,67 @@ if __name__ == "__main__":
     print(f"Standard vocabulary size: {VOCAB_SIZE}")
     print(f"PAD token ID: {PAD_TOKEN_ID}")
 
-    model_config = LLMConfig(**llm_params)
+    # --- Model and Training Config ---
+    tiny_config = LLMConfig(name="TinyQA", n_layers=2, hidden_size=128, n_heads=2)
+    MAX_SEQ_LEN = 256
+    DROPOUT_RATE = 0.1
+    PRETRAIN_LR = 3e-4
+    NUM_PRETRAIN_EPOCHS = 100  # Set a high number, early stopping will find the best
+    PRETRAIN_PATIENCE = 5  # Early stopping patience
+    WARMUP_STEPS = 500  # Number of warm-up steps for the learning rate
+
     base_llm = ToyLLM(
-        config=model_config,
+        config=tiny_config,
         vocab_size=VOCAB_SIZE,
-        max_seq_len=train_params['max_seq_len'],
+        max_seq_len=MAX_SEQ_LEN,
         pad_token_id=PAD_TOKEN_ID,
-        dropout_rate=train_params['dropout_rate'],
+        dropout_rate=DROPOUT_RATE,
     )
 
     num_params = sum(p.numel() for p in base_llm.parameters() if p.requires_grad)
     print(
-        f"Instantiated Base Model: {model_config.name} with {num_params:,} trainable parameters."
+        f"Instantiated Base Model: {tiny_config.name} with {num_params:,} trainable parameters."
     )
 
     date_now = time.strftime("%Y%m%d-%H%M%S")
-    model_dir = f"models/{model_config.name}_{date_now}"
-    PRETRAINED_MODEL_PATH = os.path.join(model_dir, "toy_llm_unified_pretrained.pth")
-    FINETUNED_MODEL_PATH = os.path.join(model_dir, "toy_llm_qasrl_finetuned.pth")
+    NUM_FINETUNE_EPOCHS = 6
+    PRETRAINED_MODEL_PATH = f"models/date_{date_now}/toy_llm_unified_pretrained.pth"
+    FINETUNED_MODEL_PATH = f"models/date_{date_now}/toy_llm_qasrl_finetuned.pth"
 
     os.makedirs(os.path.dirname(PRETRAINED_MODEL_PATH), exist_ok=True)
     os.makedirs(os.path.dirname(FINETUNED_MODEL_PATH), exist_ok=True)
     print(f"Best pre-trained model will be saved to: {PRETRAINED_MODEL_PATH}")
 
     if not SKIP_PRETRAIN:
-        print(f"\n--- Starting CLM Pre-training on nq_open for '{model_config.name}' model ---")
+        print("\n--- Starting CLM Pre-training on nq_open ---")
         pretrain_model = ToyLLMForPretraining(base_llm).to(DEVICE)
-        
-        # Use IterableDataset for streaming data
-        train_dataset_clm = NQOpenDataset(split="train")
-        val_dataset_clm = NQOpenDataset(split="validation")
 
+        dataset_loader_main = NQOpenDataset()
+        train_iter_raw, valid_iter_raw = dataset_loader_main()
+
+        # Filter out empty lines
+        train_data_list = [line for line in train_iter_raw if line.strip()]
+        valid_data_list = [line for line in valid_iter_raw if line.strip()]
+
+        BATCH_SIZE_PRETRAIN = 16
         collate_fn_clm = lambda batch: collate_batch_clm(
-            batch, tokenizer, train_params['max_seq_len'], DEVICE
+            batch, tokenizer, MAX_SEQ_LEN, DEVICE
         )
         train_dataloader_clm = DataLoader(
-            train_dataset_clm,
-            batch_size=train_params['batch_size_pretrain'],
+            train_data_list,
+            batch_size=BATCH_SIZE_PRETRAIN,
+            shuffle=True,
             collate_fn=collate_fn_clm,
         )
         val_dataloader_clm = DataLoader(
-            val_dataset_clm,
-            batch_size=train_params['batch_size_pretrain'],
+            valid_data_list,
+            batch_size=BATCH_SIZE_PRETRAIN,
+            shuffle=False,
             collate_fn=collate_fn_clm,
         )
 
         optimizer_pretrain = optim.AdamW(
-            pretrain_model.parameters(), lr=train_params['pretrain_lr'], weight_decay=0.1
+            pretrain_model.parameters(), lr=PRETRAIN_LR, weight_decay=0.1
         )
         scheduler_pretrain = ReduceLROnPlateau(
             optimizer_pretrain,
@@ -585,12 +577,10 @@ if __name__ == "__main__":
         epochs_no_improve = 0
         global_step = 0
 
-        for epoch in range(1, train_params['num_pretrain_epochs'] + 1):
+        for epoch in range(1, NUM_PRETRAIN_EPOCHS + 1):
             pretrain_model.train()
             total_train_loss = 0
-            
-            # The DataLoader for an IterableDataset will handle shuffling internally
-            # or in this case, iterate through the entire stream.
+
             for batch_idx, (clm_inputs, clm_labels, attention_masks) in enumerate(
                 train_dataloader_clm
             ):
@@ -598,10 +588,11 @@ if __name__ == "__main__":
                 if clm_inputs is None:
                     continue
 
-                if global_step < train_params['warmup_steps']:
-                    lr_scale = global_step / train_params['warmup_steps']
+                # --- LR Warm-up Logic ---
+                if global_step < WARMUP_STEPS:
+                    lr_scale = global_step / WARMUP_STEPS
                     for param_group in optimizer_pretrain.param_groups:
-                        param_group["lr"] = lr_scale * train_params['pretrain_lr']
+                        param_group["lr"] = lr_scale * PRETRAIN_LR
 
                 optimizer_pretrain.zero_grad()
                 output_logits = pretrain_model(
@@ -616,8 +607,7 @@ if __name__ == "__main__":
                 optimizer_pretrain.step()
                 total_train_loss += loss.item()
 
-            avg_train_loss = total_train_loss / (batch_idx + 1)
-
+            avg_train_loss = total_train_loss / len(train_dataloader_clm)
             avg_val_loss = validate_pretrain_epoch(
                 pretrain_model, val_dataloader_clm, criterion_clm, DEVICE
             )
@@ -639,9 +629,9 @@ if __name__ == "__main__":
             else:
                 epochs_no_improve += 1
 
-            if epochs_no_improve >= train_params['pretrain_patience']:
+            if epochs_no_improve >= PRETRAIN_PATIENCE:
                 print(
-                    f"\nEarly stopping triggered after {train_params['pretrain_patience']} epochs without improvement."
+                    f"\nEarly stopping triggered after {PRETRAIN_PATIENCE} epochs without improvement."
                 )
                 break
 
@@ -683,7 +673,7 @@ if __name__ == "__main__":
 
             return tokenizer.decode(input_ids[0], skip_special_tokens=True)
 
-        test_prompt = "Question: where was the statue of liberty originally built"
+        test_prompt = "The capital of France is"
         print("\nTesting prompt completion after pretraining:")
         print(f"Prompt: '{test_prompt}'")
         completion = simple_generate(
@@ -696,7 +686,7 @@ if __name__ == "__main__":
         )
 
     if not SKIP_FINETUNE:
-        print(f"\n--- Starting Fine-tuning on QA-SRL for '{model_config.name}' model ---")
+        print("\n--- Starting Fine-tuning on QA-SRL ---")
         qa_model = ToyLLMForQuestionAnswering(base_llm).to(DEVICE)
         try:
             pretrained_dict = torch.load(PRETRAINED_MODEL_PATH, map_location=DEVICE)
@@ -715,79 +705,107 @@ if __name__ == "__main__":
             print(f"Error loading pre-trained weights: {e}")
             print("Fine-tuning will start from randomly initialized weights.")
 
+        BATCH_SIZE_QA = 8
         qa_train_dataset = QASRLDataset(
-            split="train", tokenizer=tokenizer, max_seq_len=train_params['max_seq_len']
+            split="train", tokenizer=tokenizer, max_seq_len=MAX_SEQ_LEN
         )
         qa_train_dataloader = DataLoader(
             qa_train_dataset,
-            batch_size=train_params['batch_size_qa'],
+            batch_size=BATCH_SIZE_QA,
             shuffle=True,
             collate_fn=collate_batch_qa,
         )
-        
-        qa_val_dataset = QASRLDataset(
-            split="validation", tokenizer=tokenizer, max_seq_len=train_params['max_seq_len']
-        )
-        qa_val_dataloader = DataLoader(
-            qa_val_dataset,
-            batch_size=train_params['batch_size_qa'],
-            shuffle=False,
-            collate_fn=collate_batch_qa,
-        )
 
-        optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=train_params['finetune_lr'],  weight_decay=0.01)
+        optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=5e-5)
         scheduler_finetune = ReduceLROnPlateau(
             optimizer_finetune, mode="min", factor=0.5, patience=2
         )
 
-        print(f"Starting fine-tuning for {train_params['num_finetune_epochs']} epochs...")
-        
-        best_val_loss = float("inf")
-        final_train_loss = 0.0
-
-        for epoch_num in range(1, train_params['num_finetune_epochs'] + 1):
-            avg_train_loss = finetune_qa_epoch(
+        print(f"Starting fine-tuning for {NUM_FINETUNE_EPOCHS} epochs...")
+        avg_epoch_loss = 0.0
+        for epoch_num in range(1, NUM_FINETUNE_EPOCHS + 1):
+            avg_epoch_loss = finetune_qa_epoch(
                 qa_model, qa_train_dataloader, optimizer_finetune, DEVICE, epoch_num
             )
-            final_train_loss = avg_train_loss
-            
-            avg_val_loss, val_acc, val_f1 = validate_qa_epoch(qa_model, qa_val_dataloader, DEVICE)
-            
-            scheduler_finetune.step(avg_val_loss)
-            
-            current_lr = optimizer_finetune.param_groups[0]['lr']
+            scheduler_finetune.step(avg_epoch_loss)
             print(
-                f"--- End of Finetune Epoch {epoch_num} | Train Loss: {avg_train_loss:.4f} | "
-                f"Val Loss: {avg_val_loss:.4f} | Val Acc: {val_acc:.4f} | Val F1: {val_f1:.4f} "
-                f"| LR: {current_lr:.6f} ---"
+                f"--- End of Finetune Epoch {epoch_num} | Average QA Loss: {avg_epoch_loss:.4f} "
+                f"| LR: {scheduler_finetune.optimizer.param_groups[0]['lr']:.6f} ---"
             )
 
-            if avg_val_loss < best_val_loss:
-                best_val_loss = avg_val_loss
-                torch.save(qa_model.state_dict(), FINETUNED_MODEL_PATH)
-                print(f"Validation loss improved. Saving best model to {FINETUNED_MODEL_PATH}")
-
         print("\nFine-tuning finished.")
-        print(f"Best fine-tuned QA model state_dict saved to {FINETUNED_MODEL_PATH}")
+        torch.save(qa_model.state_dict(), FINETUNED_MODEL_PATH)
+        print(f"Fine-tuned QA model state_dict saved to {FINETUNED_MODEL_PATH}")
 
-        print(f"Loading best model from {FINETUNED_MODEL_PATH} for final stats.")
-        qa_model.load_state_dict(torch.load(FINETUNED_MODEL_PATH))
-
-        final_val_acc, final_val_f1 = evaluate_qa_metrics(qa_model, qa_val_dataloader, DEVICE)
+        # The mock evaluate_qa_metrics will run here if the original is not found
+        final_acc, final_f1 = evaluate_qa_metrics(qa_model, qa_train_dataloader, DEVICE)
         print(
-            f"Final Validation Accuracy: {final_val_acc:.4f} | Final F1: {final_val_f1:.4f}"
+            f"Final Training Set Accuracy: {final_acc:.4f} | Final F1: {final_f1:.4f}"
         )
         stats = {
             "pretrain_epochs": "skipped" if SKIP_PRETRAIN else epoch,
-            "finetune_epochs": train_params['num_finetune_epochs'],
-            "final_train_loss": final_train_loss,
-            "best_validation_loss": best_val_loss,
-            "final_validation_accuracy": final_val_acc,
-            "final_validation_f1": final_val_f1,
+            "finetune_epochs": NUM_FINETUNE_EPOCHS,
+            "final_loss": avg_epoch_loss,
+            "final_accuracy": final_acc,
+            "final_f1": final_f1,
         }
-        stats_path = os.path.join(model_dir, "finetune_stats.json")
+        stats_path = f"models/date_{date_now}/finetune_stats.json"
         with open(stats_path, "w") as f:
             json.dump(stats, f, indent=2)
         print(f"Final training statistics saved to '{stats_path}'")
     else:
         print("Skipping fine-tuning step.")
+
+    print("\n--- Running Validation Metrics on QA-SRL Validation Set ---")
+    qa_model_for_eval = ToyLLMForQuestionAnswering(base_llm).to(DEVICE)
+    try:
+        if os.path.exists(FINETUNED_MODEL_PATH):
+            qa_model_for_eval.load_state_dict(
+                torch.load(FINETUNED_MODEL_PATH, map_location=DEVICE)
+            )
+            print(f"Loaded finetuned model from {FINETUNED_MODEL_PATH} for validation.")
+        elif os.path.exists(PRETRAINED_MODEL_PATH):
+            pretrained_dict = torch.load(PRETRAINED_MODEL_PATH, map_location=DEVICE)
+            qa_model_for_eval.llm.load_state_dict(
+                {
+                    k.replace("llm.", ""): v
+                    for k, v in pretrained_dict.items()
+                    if k.startswith("llm.")
+                }
+            )
+            print(
+                f"Loaded pretrained model from {PRETRAINED_MODEL_PATH} for validation."
+            )
+        else:
+            print(
+                "No trained weights found. Using randomly initialized model for validation."
+            )
+    except Exception as e:
+        print(f"Error loading model weights for validation: {e}. Using random weights.")
+
+    BATCH_SIZE_QA = 8
+    qa_val_dataset = QASRLDataset(
+        split="validation", tokenizer=tokenizer, max_seq_len=MAX_SEQ_LEN
+    )
+    qa_val_dataloader = DataLoader(
+        qa_val_dataset,
+        batch_size=BATCH_SIZE_QA,
+        shuffle=False,
+        collate_fn=collate_batch_qa,
+    )
+
+    val_acc, val_f1 = evaluate_qa_metrics(qa_model_for_eval, qa_val_dataloader, DEVICE)
+    print(
+        f"Final Validation Accuracy: {val_acc:.4f} | Final Validation F1: {val_f1:.4f}"
+    )
+    val_stats_path = f"models/date_{date_now}/validation_stats.json"
+    with open(val_stats_path, "w") as f:
+        json.dump(
+            {
+                "final_validation_accuracy": val_acc,
+                "final_validation_f1": val_f1,
+            },
+            f,
+            indent=2,
+        )
+    print(f"Validation statistics saved to '{val_stats_path}'")

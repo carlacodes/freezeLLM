@@ -1,0 +1,13 @@
+Miniconda: To make conda operate correctly, please run: 
+            source $UCL_CONDA_PATH/etc/profile.d/conda.sh 
+
+Loading python/miniconda3/24.3.0-0
+  Loading requirement: gcc-libs/10.2.0
+Traceback (most recent call last):
+  File "/home/zceccgr/Scratch/freezeLLM/llm_scale_up/pretrain_wikitext_finetune_qasrl.py", line 619, in <module>
+    avg_train_loss = total_train_loss / len(train_dataloader_clm)
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/zceccgr/.conda/envs/llm-env/lib/python3.12/site-packages/torch/utils/data/dataloader.py", line 527, in __len__
+    length = self._IterableDataset_len_called = len(self.dataset)  # type: ignore[assignment, arg-type]
+                                                ^^^^^^^^^^^^^^^^^
+TypeError: object of type 'NQOpenDataset' has no len()
