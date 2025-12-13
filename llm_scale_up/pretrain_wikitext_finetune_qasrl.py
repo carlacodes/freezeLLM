@@ -429,9 +429,11 @@ def collate_batch_qa(batch):
     return input_ids, attention_mask, start_positions, end_positions
 
 
-def finetune_qa_epoch(model, dataloader, optimizer, device, epoch_num, log_interval=50):
+def finetune_qa_epoch(model, dataloader, optimizer, device, epoch_num, gradient_accumulation_steps=1, log_interval=50):
     model.train()
     total_loss = 0
+    optimizer.zero_grad()
+
     for batch_idx, (input_ids, attention_mask, start_pos, end_pos) in enumerate(
         dataloader
     ):
@@ -441,7 +443,6 @@ def finetune_qa_epoch(model, dataloader, optimizer, device, epoch_num, log_inter
             start_pos.to(device),
             end_pos.to(device),
         )
-        optimizer.zero_grad()
         loss, _, _ = model(
             input_ids,
             attention_mask=attention_mask,
@@ -450,10 +451,18 @@ def finetune_qa_epoch(model, dataloader, optimizer, device, epoch_num, log_inter
         )
         if loss is None:
             continue
+
+        # Scale loss for gradient accumulation
+        loss = loss / gradient_accumulation_steps
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
-        total_loss += loss.item()
+        total_loss += loss.item() * gradient_accumulation_steps
+
+        # Only update weights after accumulating gradients
+        if (batch_idx + 1) % gradient_accumulation_steps == 0 or (batch_idx + 1) == len(dataloader):
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            optimizer.zero_grad()
+
         if batch_idx % log_interval == 0 and batch_idx > 0:
             avg_loss = total_loss / (batch_idx + 1)
             print(
@@ -585,10 +594,16 @@ if __name__ == "__main__":
         epochs_no_improve = 0
         global_step = 0
 
+        # Get gradient accumulation steps for pre-training (default to 1)
+        pretrain_grad_accum = train_params.get('gradient_accumulation_steps', 1)
+        effective_pretrain_batch = train_params['batch_size_pretrain'] * pretrain_grad_accum
+        print(f"Pre-training batch size: {train_params['batch_size_pretrain']} | Gradient accumulation: {pretrain_grad_accum} | Effective batch size: {effective_pretrain_batch}")
+
         for epoch in range(1, train_params['num_pretrain_epochs'] + 1):
             pretrain_model.train()
             total_train_loss = 0
-            
+            optimizer_pretrain.zero_grad()
+
             # The DataLoader for an IterableDataset will handle shuffling internally
             # or in this case, iterate through the entire stream.
             for batch_idx, (clm_inputs, clm_labels, attention_masks) in enumerate(
@@ -603,7 +618,6 @@ if __name__ == "__main__":
                     for param_group in optimizer_pretrain.param_groups:
                         param_group["lr"] = lr_scale * train_params['pretrain_lr']
 
-                optimizer_pretrain.zero_grad()
                 output_logits = pretrain_model(
                     clm_inputs, attention_mask=attention_masks, is_causal=True
                 )
@@ -611,10 +625,17 @@ if __name__ == "__main__":
                     output_logits.view(-1, pretrain_model.llm.vocab_size),
                     clm_labels.view(-1),
                 )
+
+                # Scale loss for gradient accumulation
+                loss = loss / pretrain_grad_accum
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(pretrain_model.parameters(), 0.5)
-                optimizer_pretrain.step()
-                total_train_loss += loss.item()
+                total_train_loss += loss.item() * pretrain_grad_accum
+
+                # Only update weights after accumulating gradients
+                if (batch_idx + 1) % pretrain_grad_accum == 0:
+                    torch.nn.utils.clip_grad_norm_(pretrain_model.parameters(), 0.5)
+                    optimizer_pretrain.step()
+                    optimizer_pretrain.zero_grad()
 
             avg_train_loss = total_train_loss / (batch_idx + 1)
 
@@ -740,21 +761,31 @@ if __name__ == "__main__":
             optimizer_finetune, mode="min", factor=0.5, patience=2
         )
 
-        print(f"Starting fine-tuning for {train_params['num_finetune_epochs']} epochs...")
-        
+        # Get gradient accumulation steps (default to 1 if not specified)
+        gradient_accumulation_steps = train_params.get('gradient_accumulation_steps', 1)
+        finetune_patience = train_params.get('finetune_patience', 5)
+
+        effective_batch_size = train_params['batch_size_qa'] * gradient_accumulation_steps
+        print(f"Starting fine-tuning for up to {train_params['num_finetune_epochs']} epochs...")
+        print(f"Batch size: {train_params['batch_size_qa']} | Gradient accumulation steps: {gradient_accumulation_steps} | Effective batch size: {effective_batch_size}")
+        print(f"Early stopping patience: {finetune_patience} epochs")
+
         best_val_loss = float("inf")
+        best_val_f1 = 0.0
         final_train_loss = 0.0
+        epochs_no_improve = 0
 
         for epoch_num in range(1, train_params['num_finetune_epochs'] + 1):
             avg_train_loss = finetune_qa_epoch(
-                qa_model, qa_train_dataloader, optimizer_finetune, DEVICE, epoch_num
+                qa_model, qa_train_dataloader, optimizer_finetune, DEVICE, epoch_num,
+                gradient_accumulation_steps=gradient_accumulation_steps
             )
             final_train_loss = avg_train_loss
-            
+
             avg_val_loss, val_acc, val_f1 = validate_qa_epoch(qa_model, qa_val_dataloader, DEVICE)
-            
+
             scheduler_finetune.step(avg_val_loss)
-            
+
             current_lr = optimizer_finetune.param_groups[0]['lr']
             print(
                 f"--- End of Finetune Epoch {epoch_num} | Train Loss: {avg_train_loss:.4f} | "
@@ -762,10 +793,22 @@ if __name__ == "__main__":
                 f"| LR: {current_lr:.6f} ---"
             )
 
+            # Track best model by validation loss
             if avg_val_loss < best_val_loss:
                 best_val_loss = avg_val_loss
+                best_val_f1 = val_f1
+                epochs_no_improve = 0
                 torch.save(qa_model.state_dict(), FINETUNED_MODEL_PATH)
                 print(f"Validation loss improved. Saving best model to {FINETUNED_MODEL_PATH}")
+            else:
+                epochs_no_improve += 1
+                print(f"No improvement for {epochs_no_improve} epoch(s).")
+
+            # Early stopping check
+            if epochs_no_improve >= finetune_patience:
+                print(f"\nEarly stopping triggered after {finetune_patience} epochs without improvement.")
+                print(f"Best validation loss: {best_val_loss:.4f} | Best F1: {best_val_f1:.4f}")
+                break
 
         print("\nFine-tuning finished.")
         print(f"Best fine-tuned QA model state_dict saved to {FINETUNED_MODEL_PATH}")
