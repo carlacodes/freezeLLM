@@ -1,0 +1,215 @@
+============================================
+Starting job: TinyQA_1214
+Model size: tiny
+Date: Sun 14 Dec 11:43:52 GMT 2025
+============================================
+Sun Dec 14 11:43:54 2025       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 550.127.05             Driver Version: 550.127.05     CUDA Version: 12.4     |
+|-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  Tesla V100-PCIE-32GB           On  |   00000000:58:00.0 Off |                    0 |
+| N/A   33C    P0             25W /  250W |       1MiB /  32768MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+                                                                                         
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI        PID   Type   Process name                              GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Starting Python script for TinyQA model...
+--- Loaded configuration 'tiny' from '/home/zceccgr/Scratch/freezeLLM/llm_scale_up/config.json' ---
+Using device: cuda
+Loading standard tokenizer ('bert-base-uncased')...
+Standard vocabulary size: 30522
+PAD token ID: 0
+Instantiated Base Model: TinyQA with 4,336,384 trainable parameters.
+Best pre-trained model will be saved to: models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+
+--- Starting CLM Pre-training on nq_open for 'TinyQA' model ---
+Pre-training batch size: 16 | Gradient accumulation: 2 | Effective batch size: 32
+--- End of Pre-train Epoch 1 | Train Loss: 5.2703 | Validation Loss: 4.8213 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 2 | Train Loss: 4.5612 | Validation Loss: 4.5942 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 3 | Train Loss: 4.3413 | Validation Loss: 4.4863 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 4 | Train Loss: 4.2003 | Validation Loss: 4.4189 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 5 | Train Loss: 4.0964 | Validation Loss: 4.3785 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 6 | Train Loss: 4.0137 | Validation Loss: 4.3507 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 7 | Train Loss: 3.9440 | Validation Loss: 4.3313 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 8 | Train Loss: 3.8844 | Validation Loss: 4.3150 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 9 | Train Loss: 3.8340 | Validation Loss: 4.3057 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 10 | Train Loss: 3.7900 | Validation Loss: 4.2994 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 11 | Train Loss: 3.7525 | Validation Loss: 4.2969 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 12 | Train Loss: 3.7189 | Validation Loss: 4.2905 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 13 | Train Loss: 3.6908 | Validation Loss: 4.2872 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 14 | Train Loss: 3.6651 | Validation Loss: 4.2859 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 15 | Train Loss: 3.6432 | Validation Loss: 4.2865 | LR: 0.000299 ---
+--- End of Pre-train Epoch 16 | Train Loss: 3.6237 | Validation Loss: 4.2862 | LR: 0.000299 ---
+--- End of Pre-train Epoch 17 | Train Loss: 3.6065 | Validation Loss: 4.2859 | LR: 0.000299 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 18 | Train Loss: 3.5041 | Validation Loss: 4.2730 | LR: 0.000150 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 19 | Train Loss: 3.4774 | Validation Loss: 4.2698 | LR: 0.000150 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 20 | Train Loss: 3.4625 | Validation Loss: 4.2672 | LR: 0.000150 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 21 | Train Loss: 3.4506 | Validation Loss: 4.2676 | LR: 0.000150 ---
+--- End of Pre-train Epoch 22 | Train Loss: 3.4425 | Validation Loss: 4.2681 | LR: 0.000150 ---
+--- End of Pre-train Epoch 23 | Train Loss: 3.4334 | Validation Loss: 4.2721 | LR: 0.000150 ---
+--- End of Pre-train Epoch 24 | Train Loss: 3.3760 | Validation Loss: 4.2618 | LR: 0.000075 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 25 | Train Loss: 3.3631 | Validation Loss: 4.2609 | LR: 0.000075 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 26 | Train Loss: 3.3562 | Validation Loss: 4.2642 | LR: 0.000075 ---
+--- End of Pre-train Epoch 27 | Train Loss: 3.3492 | Validation Loss: 4.2650 | LR: 0.000075 ---
+--- End of Pre-train Epoch 28 | Train Loss: 3.3442 | Validation Loss: 4.2628 | LR: 0.000075 ---
+--- End of Pre-train Epoch 29 | Train Loss: 3.3126 | Validation Loss: 4.2581 | LR: 0.000037 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 30 | Train Loss: 3.3063 | Validation Loss: 4.2580 | LR: 0.000037 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 31 | Train Loss: 3.3022 | Validation Loss: 4.2588 | LR: 0.000037 ---
+--- End of Pre-train Epoch 32 | Train Loss: 3.2983 | Validation Loss: 4.2600 | LR: 0.000037 ---
+--- End of Pre-train Epoch 33 | Train Loss: 3.2819 | Validation Loss: 4.2572 | LR: 0.000019 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 34 | Train Loss: 3.2780 | Validation Loss: 4.2582 | LR: 0.000019 ---
+--- End of Pre-train Epoch 35 | Train Loss: 3.2758 | Validation Loss: 4.2582 | LR: 0.000019 ---
+--- End of Pre-train Epoch 36 | Train Loss: 3.2740 | Validation Loss: 4.2583 | LR: 0.000019 ---
+--- End of Pre-train Epoch 37 | Train Loss: 3.2646 | Validation Loss: 4.2578 | LR: 0.000009 ---
+--- End of Pre-train Epoch 38 | Train Loss: 3.2640 | Validation Loss: 4.2570 | LR: 0.000009 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 39 | Train Loss: 3.2625 | Validation Loss: 4.2567 | LR: 0.000009 ---
+Validation loss improved. Saving model to models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+--- End of Pre-train Epoch 40 | Train Loss: 3.2610 | Validation Loss: 4.2574 | LR: 0.000009 ---
+--- End of Pre-train Epoch 41 | Train Loss: 3.2603 | Validation Loss: 4.2574 | LR: 0.000009 ---
+--- End of Pre-train Epoch 42 | Train Loss: 3.2593 | Validation Loss: 4.2574 | LR: 0.000009 ---
+--- End of Pre-train Epoch 43 | Train Loss: 3.2548 | Validation Loss: 4.2570 | LR: 0.000005 ---
+--- End of Pre-train Epoch 44 | Train Loss: 3.2535 | Validation Loss: 4.2572 | LR: 0.000005 ---
+
+Early stopping triggered after 5 epochs without improvement.
+
+Loading best pretrained model from models/TinyQA_20251214-114416/toy_llm_unified_pretrained.pth
+
+Testing prompt completion after pretraining:
+Prompt: 'Question: where was the statue of liberty originally built'
+Model completion: question : where was the statue of liberty originally built in new orleans answer : liberty
+
+--- Starting Fine-tuning on QA-SRL for 'TinyQA' model ---
+Successfully loaded pre-trained weights into the QA model.
+Loading and processing qa_srl dataset for 'train' split...
+Finished processing 'train'. Found 5031 valid QA examples.
+Loading and processing qa_srl dataset for 'validation' split...
+Finished processing 'validation'. Found 1686 valid QA examples.
+Starting fine-tuning for up to 20 epochs...
+Batch size: 16 | Gradient accumulation steps: 2 | Effective batch size: 32
+Early stopping patience: 4 epochs
+Finetune Epoch 1 | Batch 50/315 | Avg Loss: 5.4469
+Finetune Epoch 1 | Batch 100/315 | Avg Loss: 5.0478
+Finetune Epoch 1 | Batch 150/315 | Avg Loss: 4.8160
+Finetune Epoch 1 | Batch 200/315 | Avg Loss: 4.6384
+Finetune Epoch 1 | Batch 250/315 | Avg Loss: 4.5030
+Finetune Epoch 1 | Batch 300/315 | Avg Loss: 4.3945
+--- End of Finetune Epoch 1 | Train Loss: 4.3676 | Val Loss: 3.6295 | Val Acc: 0.0024 | Val F1: 0.1255 | LR: 0.000020 ---
+Validation loss improved. Saving best model to models/TinyQA_20251214-114416/toy_llm_qasrl_finetuned.pth
+Finetune Epoch 2 | Batch 50/315 | Avg Loss: 3.6899
+Finetune Epoch 2 | Batch 100/315 | Avg Loss: 3.6695
+Finetune Epoch 2 | Batch 150/315 | Avg Loss: 3.6516
+Finetune Epoch 2 | Batch 200/315 | Avg Loss: 3.6318
+Finetune Epoch 2 | Batch 250/315 | Avg Loss: 3.6131
+Finetune Epoch 2 | Batch 300/315 | Avg Loss: 3.5933
+--- End of Finetune Epoch 2 | Train Loss: 3.5925 | Val Loss: 3.4627 | Val Acc: 0.0077 | Val F1: 0.1382 | LR: 0.000020 ---
+Validation loss improved. Saving best model to models/TinyQA_20251214-114416/toy_llm_qasrl_finetuned.pth
+Finetune Epoch 3 | Batch 50/315 | Avg Loss: 3.4818
+Finetune Epoch 3 | Batch 100/315 | Avg Loss: 3.4641
+Finetune Epoch 3 | Batch 150/315 | Avg Loss: 3.4476
+Finetune Epoch 3 | Batch 200/315 | Avg Loss: 3.4433
+Finetune Epoch 3 | Batch 250/315 | Avg Loss: 3.4409
+Finetune Epoch 3 | Batch 300/315 | Avg Loss: 3.4411
+--- End of Finetune Epoch 3 | Train Loss: 3.4375 | Val Loss: 3.4012 | Val Acc: 0.0107 | Val F1: 0.1441 | LR: 0.000020 ---
+Validation loss improved. Saving best model to models/TinyQA_20251214-114416/toy_llm_qasrl_finetuned.pth
+Finetune Epoch 4 | Batch 50/315 | Avg Loss: 3.3610
+Finetune Epoch 4 | Batch 100/315 | Avg Loss: 3.3463
+Finetune Epoch 4 | Batch 150/315 | Avg Loss: 3.3654
+Finetune Epoch 4 | Batch 200/315 | Avg Loss: 3.3616
+Finetune Epoch 4 | Batch 250/315 | Avg Loss: 3.3580
+Finetune Epoch 4 | Batch 300/315 | Avg Loss: 3.3470
+--- End of Finetune Epoch 4 | Train Loss: 3.3459 | Val Loss: 3.3829 | Val Acc: 0.0095 | Val F1: 0.1408 | LR: 0.000020 ---
+Validation loss improved. Saving best model to models/TinyQA_20251214-114416/toy_llm_qasrl_finetuned.pth
+Finetune Epoch 5 | Batch 50/315 | Avg Loss: 3.3200
+Finetune Epoch 5 | Batch 100/315 | Avg Loss: 3.2879
+Finetune Epoch 5 | Batch 150/315 | Avg Loss: 3.2945
+Finetune Epoch 5 | Batch 200/315 | Avg Loss: 3.2855
+Finetune Epoch 5 | Batch 250/315 | Avg Loss: 3.2871
+Finetune Epoch 5 | Batch 300/315 | Avg Loss: 3.2884
+--- End of Finetune Epoch 5 | Train Loss: 3.2866 | Val Loss: 3.3770 | Val Acc: 0.0107 | Val F1: 0.1507 | LR: 0.000020 ---
+Validation loss improved. Saving best model to models/TinyQA_20251214-114416/toy_llm_qasrl_finetuned.pth
+Finetune Epoch 6 | Batch 50/315 | Avg Loss: 3.2404
+Finetune Epoch 6 | Batch 100/315 | Avg Loss: 3.2533
+Finetune Epoch 6 | Batch 150/315 | Avg Loss: 3.2393
+Finetune Epoch 6 | Batch 200/315 | Avg Loss: 3.2377
+Finetune Epoch 6 | Batch 250/315 | Avg Loss: 3.2354
+Finetune Epoch 6 | Batch 300/315 | Avg Loss: 3.2367
+--- End of Finetune Epoch 6 | Train Loss: 3.2376 | Val Loss: 3.3549 | Val Acc: 0.0095 | Val F1: 0.1562 | LR: 0.000020 ---
+Validation loss improved. Saving best model to models/TinyQA_20251214-114416/toy_llm_qasrl_finetuned.pth
+Finetune Epoch 7 | Batch 50/315 | Avg Loss: 3.1675
+Finetune Epoch 7 | Batch 100/315 | Avg Loss: 3.1697
+Finetune Epoch 7 | Batch 150/315 | Avg Loss: 3.1759
+Finetune Epoch 7 | Batch 200/315 | Avg Loss: 3.1769
+Finetune Epoch 7 | Batch 250/315 | Avg Loss: 3.1793
+Finetune Epoch 7 | Batch 300/315 | Avg Loss: 3.1780
+--- End of Finetune Epoch 7 | Train Loss: 3.1791 | Val Loss: 3.3553 | Val Acc: 0.0089 | Val F1: 0.1590 | LR: 0.000020 ---
+No improvement for 1 epoch(s).
+Finetune Epoch 8 | Batch 50/315 | Avg Loss: 3.1536
+Finetune Epoch 8 | Batch 100/315 | Avg Loss: 3.1409
+Finetune Epoch 8 | Batch 150/315 | Avg Loss: 3.1342
+Finetune Epoch 8 | Batch 200/315 | Avg Loss: 3.1445
+Finetune Epoch 8 | Batch 250/315 | Avg Loss: 3.1449
+Finetune Epoch 8 | Batch 300/315 | Avg Loss: 3.1367
+--- End of Finetune Epoch 8 | Train Loss: 3.1363 | Val Loss: 3.3664 | Val Acc: 0.0130 | Val F1: 0.1625 | LR: 0.000020 ---
+No improvement for 2 epoch(s).
+Finetune Epoch 9 | Batch 50/315 | Avg Loss: 3.0872
+Finetune Epoch 9 | Batch 100/315 | Avg Loss: 3.0993
+Finetune Epoch 9 | Batch 150/315 | Avg Loss: 3.0867
+Finetune Epoch 9 | Batch 200/315 | Avg Loss: 3.0986
+Finetune Epoch 9 | Batch 250/315 | Avg Loss: 3.0892
+Finetune Epoch 9 | Batch 300/315 | Avg Loss: 3.0841
+--- End of Finetune Epoch 9 | Train Loss: 3.0837 | Val Loss: 3.4017 | Val Acc: 0.0130 | Val F1: 0.1679 | LR: 0.000010 ---
+No improvement for 3 epoch(s).
+Finetune Epoch 10 | Batch 50/315 | Avg Loss: 3.0288
+Finetune Epoch 10 | Batch 100/315 | Avg Loss: 3.0092
+Finetune Epoch 10 | Batch 150/315 | Avg Loss: 3.0081
+Finetune Epoch 10 | Batch 200/315 | Avg Loss: 3.0197
+Finetune Epoch 10 | Batch 250/315 | Avg Loss: 3.0208
+Finetune Epoch 10 | Batch 300/315 | Avg Loss: 3.0331
+--- End of Finetune Epoch 10 | Train Loss: 3.0381 | Val Loss: 3.3800 | Val Acc: 0.0130 | Val F1: 0.1617 | LR: 0.000010 ---
+No improvement for 4 epoch(s).
+
+Early stopping triggered after 4 epochs without improvement.
+Best validation loss: 3.3549 | Best F1: 0.1562
+
+Fine-tuning finished.
+Best fine-tuned QA model state_dict saved to models/TinyQA_20251214-114416/toy_llm_qasrl_finetuned.pth
+Loading best model from models/TinyQA_20251214-114416/toy_llm_qasrl_finetuned.pth for final stats.
+Final Validation Accuracy: 0.0095 | Final F1: 0.1562
+Final training statistics saved to 'models/TinyQA_20251214-114416/finetune_stats.json'
+============================================
+Job completed: Sun 14 Dec 13:27:52 GMT 2025
+============================================
