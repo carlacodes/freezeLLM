@@ -302,6 +302,7 @@ def validate_pretrain_epoch(model, dataloader, criterion, device):
     """Runs a validation loop for one epoch during pre-training."""
     model.eval()
     total_loss = 0
+    num_batches = 0
     with torch.no_grad():
         for clm_inputs, clm_labels, attention_masks in dataloader:
             if clm_inputs is None:
@@ -313,7 +314,8 @@ def validate_pretrain_epoch(model, dataloader, criterion, device):
                 output_logits.view(-1, model.llm.vocab_size), clm_labels.view(-1)
             )
             total_loss += loss.item()
-    return total_loss / len(dataloader) if len(dataloader) > 0 else 0
+            num_batches += 1
+    return total_loss / num_batches if num_batches > 0 else 0
 
 
 class NQOpenDataset(IterableDataset):
