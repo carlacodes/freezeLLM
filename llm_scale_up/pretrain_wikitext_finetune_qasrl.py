@@ -1,17 +1,33 @@
 import json
 import os
 import time
-from typing import Iterator, Tuple
+import math
+from typing import Iterator, Tuple, List
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from datasets import load_dataset, load_from_disk
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils.data import DataLoader, Dataset, IterableDataset
+from datasets import load_dataset, load_from_disk, concatenate_datasets
+from torch.optim.lr_scheduler import ReduceLROnPlateau, LambdaLR
+from torch.utils.data import DataLoader, Dataset, IterableDataset, ConcatDataset
 from transformers import AutoTokenizer
 import argparse
 
 DATASET_PATH = "/home/zceccgr/Scratch/downloaded_datasets/qa_srl"
+
+
+def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, last_epoch=-1):
+    """
+    Create a schedule with a learning rate that decreases linearly from the initial lr set in the optimizer to 0, after
+    a warmup period during which it increases linearly from 0 to the initial lr set in the optimizer.
+    """
+    def lr_lambda(current_step: int):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        return max(
+            0.0, float(num_training_steps - current_step) / float(max(1, num_training_steps - num_warmup_steps))
+        )
+
+    return LambdaLR(optimizer, lr_lambda, last_epoch=last_epoch)
 
 
 try:
@@ -339,6 +355,170 @@ class NQOpenDataset(IterableDataset):
                 yield f"Question: {question} Answer: {answer[0]}"
 
 
+class WikiText103Dataset(IterableDataset):
+    """
+    Dataset class for WikiText-103 for additional pre-training.
+    This provides much more diverse language modeling data than nq_open alone.
+    WikiText-103 has ~103M tokens, providing substantial pre-training data.
+    """
+
+    DATASET_NAME = "wikitext"
+    DATASET_CONFIG = "wikitext-103-raw-v1"
+
+    def __init__(self, split: str, cache_dir: str = None):
+        self.split = split
+        self.cache_dir = cache_dir
+        # Map common split names
+        hf_split = "train" if split == "train" else "validation"
+        self.dataset = load_dataset(
+            self.DATASET_NAME,
+            self.DATASET_CONFIG,
+            split=hf_split,
+            cache_dir=self.cache_dir
+        )
+        print(f"Loaded WikiText-103 {hf_split} split with {len(self.dataset)} examples")
+
+    def __iter__(self):
+        for item in self.dataset:
+            text = item.get("text", "").strip()
+            # Filter out empty lines and section headers
+            if text and len(text) > 50 and not text.startswith(" = "):
+                yield text
+
+
+class CombinedPretrainDataset(IterableDataset):
+    """
+    Combines multiple pre-training datasets by interleaving them.
+    This helps the model learn both QA-specific patterns and general language.
+    """
+
+    def __init__(self, datasets: List[IterableDataset], weights: List[float] = None):
+        self.datasets = datasets
+        # Default to equal weights if not specified
+        self.weights = weights if weights else [1.0 / len(datasets)] * len(datasets)
+        # Normalize weights
+        total = sum(self.weights)
+        self.weights = [w / total for w in self.weights]
+
+    def __iter__(self):
+        import random
+        iterators = [iter(ds) for ds in self.datasets]
+        exhausted = [False] * len(self.datasets)
+
+        while not all(exhausted):
+            # Choose a dataset based on weights
+            available_indices = [i for i, e in enumerate(exhausted) if not e]
+            if not available_indices:
+                break
+
+            available_weights = [self.weights[i] for i in available_indices]
+            total_weight = sum(available_weights)
+            normalized_weights = [w / total_weight for w in available_weights]
+
+            idx = random.choices(available_indices, weights=normalized_weights, k=1)[0]
+
+            try:
+                yield next(iterators[idx])
+            except StopIteration:
+                exhausted[idx] = True
+                # Restart the iterator for continued training
+                iterators[idx] = iter(self.datasets[idx])
+
+
+class SQuADDataset(Dataset):
+    """
+    Dataset class for SQuAD v1.1/v2 for additional fine-tuning data.
+    SQuAD provides ~87K training examples (v1.1) or ~130K (v2), significantly
+    more than QA-SRL's 5K examples.
+    """
+
+    def __init__(self, split: str, tokenizer, max_seq_len: int, version: str = "squad"):
+        print(f"Loading and processing SQuAD dataset for '{split}' split...")
+        self.tokenizer = tokenizer
+        self.max_seq_len = max_seq_len
+
+        # Load SQuAD dataset
+        hf_split = "train" if split == "train" else "validation"
+        self.dataset = load_dataset(version, split=hf_split)
+        print(f"Loaded SQuAD {hf_split} with {len(self.dataset)} examples")
+
+        self.processed_data = self._preprocess()
+
+    def _preprocess(self):
+        processed = []
+        for example in self.dataset:
+            context = example["context"]
+            question = example["question"]
+            answers = example["answers"]
+
+            # Skip examples without answers (for SQuAD v2 impossible questions)
+            if not answers["text"]:
+                continue
+
+            answer_text = answers["text"][0]
+            char_start = answers["answer_start"][0]
+            char_end = char_start + len(answer_text)
+
+            encoding = self.tokenizer(
+                question,
+                context,
+                truncation="only_second",
+                max_length=self.max_seq_len,
+                stride=128,
+                return_overflowing_tokens=True,
+                return_offsets_mapping=True,
+                padding="max_length",
+            )
+
+            for i in range(len(encoding["input_ids"])):
+                sequence_ids = encoding.sequence_ids(i)
+                context_indices = [
+                    idx for idx, sid in enumerate(sequence_ids) if sid == 1
+                ]
+                if not context_indices:
+                    continue
+
+                offset_mapping = encoding["offset_mapping"][i]
+                token_start_index = -1
+                token_end_index = -1
+
+                # Find token positions for the answer span
+                for idx in context_indices:
+                    start, end = offset_mapping[idx]
+                    if start <= char_start < end:
+                        token_start_index = idx
+                    if start < char_end <= end:
+                        token_end_index = idx
+
+                if token_start_index != -1 and token_end_index != -1:
+                    processed.append(
+                        {
+                            "input_ids": torch.tensor(
+                                encoding["input_ids"][i], dtype=torch.long
+                            ),
+                            "attention_mask": torch.tensor(
+                                encoding["attention_mask"][i], dtype=torch.long
+                            ),
+                            "start_position": torch.tensor(
+                                token_start_index, dtype=torch.long
+                            ),
+                            "end_position": torch.tensor(
+                                token_end_index, dtype=torch.long
+                            ),
+                        }
+                    )
+                    break  # Only use first valid chunk per example
+
+        print(f"Finished processing SQuAD. Found {len(processed)} valid QA examples.")
+        return processed
+
+    def __len__(self):
+        return len(self.processed_data)
+
+    def __getitem__(self, idx):
+        return self.processed_data[idx]
+
+
 class QASRLDataset(Dataset):
     """Dataset class for fine-tuning on qa_srl."""
 
@@ -560,12 +740,33 @@ if __name__ == "__main__":
     print(f"Best pre-trained model will be saved to: {PRETRAINED_MODEL_PATH}")
 
     if not SKIP_PRETRAIN:
-        print(f"\n--- Starting CLM Pre-training on nq_open for '{model_config.name}' model ---")
+        # Check if we should use additional pre-training data
+        use_additional_data = train_params.get('use_additional_pretrain_data', False)
+
+        if use_additional_data:
+            print(f"\n--- Starting CLM Pre-training on nq_open + WikiText-103 for '{model_config.name}' model ---")
+            # Load both datasets and combine them
+            nq_train = NQOpenDataset(split="train")
+            wiki_train = WikiText103Dataset(split="train")
+            # Weight WikiText more heavily as it has more diverse language
+            train_dataset_clm = CombinedPretrainDataset(
+                [nq_train, wiki_train],
+                weights=[0.3, 0.7]  # 30% QA data, 70% general language
+            )
+
+            nq_val = NQOpenDataset(split="validation")
+            wiki_val = WikiText103Dataset(split="validation")
+            val_dataset_clm = CombinedPretrainDataset(
+                [nq_val, wiki_val],
+                weights=[0.3, 0.7]
+            )
+            print("Using combined pre-training data: nq_open (30%) + WikiText-103 (70%)")
+        else:
+            print(f"\n--- Starting CLM Pre-training on nq_open for '{model_config.name}' model ---")
+            train_dataset_clm = NQOpenDataset(split="train")
+            val_dataset_clm = NQOpenDataset(split="validation")
+
         pretrain_model = ToyLLMForPretraining(base_llm).to(DEVICE)
-        
-        # Use IterableDataset for streaming data
-        train_dataset_clm = NQOpenDataset(split="train")
-        val_dataset_clm = NQOpenDataset(split="validation")
 
         collate_fn_clm = lambda batch: collate_batch_clm(
             batch, tokenizer, train_params['max_seq_len'], DEVICE
@@ -719,7 +920,14 @@ if __name__ == "__main__":
         )
 
     if not SKIP_FINETUNE:
-        print(f"\n--- Starting Fine-tuning on QA-SRL for '{model_config.name}' model ---")
+        # Check if we should use additional fine-tuning data (SQuAD)
+        use_squad = train_params.get('use_squad_finetune', False)
+
+        if use_squad:
+            print(f"\n--- Starting Fine-tuning on SQuAD + QA-SRL for '{model_config.name}' model ---")
+        else:
+            print(f"\n--- Starting Fine-tuning on QA-SRL for '{model_config.name}' model ---")
+
         qa_model = ToyLLMForQuestionAnswering(base_llm).to(DEVICE)
         try:
             pretrained_dict = torch.load(PRETRAINED_MODEL_PATH, map_location=DEVICE)
@@ -738,44 +946,91 @@ if __name__ == "__main__":
             print(f"Error loading pre-trained weights: {e}")
             print("Fine-tuning will start from randomly initialized weights.")
 
+        # Load QA-SRL dataset
         qa_train_dataset = QASRLDataset(
             split="train", tokenizer=tokenizer, max_seq_len=train_params['max_seq_len']
         )
-        qa_train_dataloader = DataLoader(
-            qa_train_dataset,
-            batch_size=train_params['batch_size_qa'],
-            shuffle=True,
-            collate_fn=collate_batch_qa,
-        )
-        
         qa_val_dataset = QASRLDataset(
             split="validation", tokenizer=tokenizer, max_seq_len=train_params['max_seq_len']
         )
-        qa_val_dataloader = DataLoader(
-            qa_val_dataset,
-            batch_size=train_params['batch_size_qa'],
-            shuffle=False,
-            collate_fn=collate_batch_qa,
-        )
 
-        optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=train_params['finetune_lr'],  weight_decay=0.01)
-        scheduler_finetune = ReduceLROnPlateau(
-            optimizer_finetune, mode="min", factor=0.5, patience=2
-        )
+        # Optionally add SQuAD dataset for more training data
+        if use_squad:
+            squad_train_dataset = SQuADDataset(
+                split="train", tokenizer=tokenizer, max_seq_len=train_params['max_seq_len']
+            )
+            squad_val_dataset = SQuADDataset(
+                split="validation", tokenizer=tokenizer, max_seq_len=train_params['max_seq_len']
+            )
+            # Combine datasets
+            combined_train_dataset = ConcatDataset([qa_train_dataset, squad_train_dataset])
+            # For validation, we keep them separate but use both
+            combined_val_dataset = ConcatDataset([qa_val_dataset, squad_val_dataset])
+            print(f"Combined training data: {len(combined_train_dataset)} examples (QA-SRL: {len(qa_train_dataset)}, SQuAD: {len(squad_train_dataset)})")
+            print(f"Combined validation data: {len(combined_val_dataset)} examples")
+
+            qa_train_dataloader = DataLoader(
+                combined_train_dataset,
+                batch_size=train_params['batch_size_qa'],
+                shuffle=True,
+                collate_fn=collate_batch_qa,
+            )
+            qa_val_dataloader = DataLoader(
+                combined_val_dataset,
+                batch_size=train_params['batch_size_qa'],
+                shuffle=False,
+                collate_fn=collate_batch_qa,
+            )
+        else:
+            qa_train_dataloader = DataLoader(
+                qa_train_dataset,
+                batch_size=train_params['batch_size_qa'],
+                shuffle=True,
+                collate_fn=collate_batch_qa,
+            )
+            qa_val_dataloader = DataLoader(
+                qa_val_dataset,
+                batch_size=train_params['batch_size_qa'],
+                shuffle=False,
+                collate_fn=collate_batch_qa,
+            )
+
+        optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=train_params['finetune_lr'], weight_decay=0.01)
 
         # Get gradient accumulation steps (default to 1 if not specified)
         gradient_accumulation_steps = train_params.get('gradient_accumulation_steps', 1)
         finetune_patience = train_params.get('finetune_patience', 5)
+        finetune_warmup_steps = train_params.get('finetune_warmup_steps', 0)
+
+        # Calculate total training steps for warmup scheduler
+        steps_per_epoch = len(qa_train_dataloader) // gradient_accumulation_steps
+        total_training_steps = steps_per_epoch * train_params['num_finetune_epochs']
+
+        # Use warmup scheduler if warmup steps are specified
+        if finetune_warmup_steps > 0:
+            scheduler_finetune = get_linear_schedule_with_warmup(
+                optimizer_finetune,
+                num_warmup_steps=finetune_warmup_steps,
+                num_training_steps=total_training_steps
+            )
+            print(f"Using linear warmup scheduler with {finetune_warmup_steps} warmup steps")
+        else:
+            scheduler_finetune = ReduceLROnPlateau(
+                optimizer_finetune, mode="min", factor=0.5, patience=2
+            )
+            print("Using ReduceLROnPlateau scheduler")
 
         effective_batch_size = train_params['batch_size_qa'] * gradient_accumulation_steps
         print(f"Starting fine-tuning for up to {train_params['num_finetune_epochs']} epochs...")
         print(f"Batch size: {train_params['batch_size_qa']} | Gradient accumulation steps: {gradient_accumulation_steps} | Effective batch size: {effective_batch_size}")
         print(f"Early stopping patience: {finetune_patience} epochs")
+        print(f"Total training steps: {total_training_steps}")
 
         best_val_loss = float("inf")
         best_val_f1 = 0.0
         final_train_loss = 0.0
         epochs_no_improve = 0
+        global_finetune_step = 0
 
         for epoch_num in range(1, train_params['num_finetune_epochs'] + 1):
             avg_train_loss = finetune_qa_epoch(
@@ -783,10 +1038,16 @@ if __name__ == "__main__":
                 gradient_accumulation_steps=gradient_accumulation_steps
             )
             final_train_loss = avg_train_loss
+            global_finetune_step += steps_per_epoch
 
             avg_val_loss, val_acc, val_f1 = validate_qa_epoch(qa_model, qa_val_dataloader, DEVICE)
 
-            scheduler_finetune.step(avg_val_loss)
+            # Step the scheduler (different behavior for warmup vs plateau)
+            if finetune_warmup_steps > 0:
+                # Warmup scheduler is stepped per batch, but we also step here for tracking
+                pass  # Already stepped during training
+            else:
+                scheduler_finetune.step(avg_val_loss)
 
             current_lr = optimizer_finetune.param_groups[0]['lr']
             print(

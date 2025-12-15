@@ -11,14 +11,17 @@
       "dropout_rate": 0.15,
       "pretrain_lr": 3e-4,
       "num_pretrain_epochs": 100,
-      "pretrain_patience": 5,
+      "pretrain_patience": 10,
       "warmup_steps": 500,
       "batch_size_pretrain": 16,
       "gradient_accumulation_steps": 2,
-      "num_finetune_epochs": 20,
+      "num_finetune_epochs": 30,
       "finetune_lr": 2e-5,
-      "finetune_patience": 4,
-      "batch_size_qa": 16
+      "finetune_patience": 8,
+      "finetune_warmup_steps": 200,
+      "batch_size_qa": 16,
+      "use_additional_pretrain_data": true,
+      "use_squad_finetune": true
     }
   },
   "small": {
@@ -33,14 +36,17 @@
       "dropout_rate": 0.1,
       "pretrain_lr": 3e-4,
       "num_pretrain_epochs": 100,
-      "pretrain_patience": 5,
+      "pretrain_patience": 10,
       "warmup_steps": 500,
       "batch_size_pretrain": 8,
       "gradient_accumulation_steps": 4,
-      "num_finetune_epochs": 20,
+      "num_finetune_epochs": 30,
       "finetune_lr": 1e-5,
-      "finetune_patience": 3,
-      "batch_size_qa": 8
+      "finetune_patience": 8,
+      "finetune_warmup_steps": 300,
+      "batch_size_qa": 8,
+      "use_additional_pretrain_data": true,
+      "use_squad_finetune": true
     }
   },
   "base": {
@@ -55,14 +61,17 @@
       "dropout_rate": 0.1,
       "pretrain_lr": 1e-4,
       "num_pretrain_epochs": 100,
-      "pretrain_patience": 5,
+      "pretrain_patience": 10,
       "warmup_steps": 1000,
       "batch_size_pretrain": 8,
       "gradient_accumulation_steps": 4,
-      "num_finetune_epochs": 20,
-      "finetune_lr": 1e-5,
-      "finetune_patience": 3,
-      "batch_size_qa": 8
+      "num_finetune_epochs": 30,
+      "finetune_lr": 5e-6,
+      "finetune_patience": 8,
+      "finetune_warmup_steps": 500,
+      "batch_size_qa": 8,
+      "use_additional_pretrain_data": true,
+      "use_squad_finetune": true
     }
   },
   "medium": {
@@ -75,16 +84,19 @@
     "training_params": {
       "max_seq_len": 512,
       "dropout_rate": 0.1,
-      "pretrain_lr": 1e-4,
+      "pretrain_lr": 5e-5,
       "num_pretrain_epochs": 100,
-      "pretrain_patience": 5,
-      "warmup_steps": 1000,
+      "pretrain_patience": 15,
+      "warmup_steps": 2000,
       "batch_size_pretrain": 4,
       "gradient_accumulation_steps": 8,
-      "num_finetune_epochs": 20,
-      "finetune_lr": 1e-5,
-      "finetune_patience": 3,
-      "batch_size_qa": 4
+      "num_finetune_epochs": 40,
+      "finetune_lr": 3e-6,
+      "finetune_patience": 10,
+      "finetune_warmup_steps": 1000,
+      "batch_size_qa": 4,
+      "use_additional_pretrain_data": true,
+      "use_squad_finetune": true
     }
   }
 }
