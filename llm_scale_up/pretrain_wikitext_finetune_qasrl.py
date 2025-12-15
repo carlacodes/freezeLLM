@@ -13,6 +13,7 @@ from transformers import AutoTokenizer
 import argparse
 
 DATASET_PATH = "/home/zceccgr/Scratch/downloaded_datasets/qa_srl"
+HF_CACHE_DIR = "/home/zceccgr/Scratch/huggingface_cache"  # Use Scratch for HF cache to avoid home dir issues
 
 
 def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, last_epoch=-1):
@@ -342,10 +343,11 @@ class NQOpenDataset(IterableDataset):
 
     DATASET_NAME = "nq_open"
 
-    def __init__(self, split: str, cache_dir: str = None):
+    def __init__(self, split: str, cache_dir: str = HF_CACHE_DIR):
         self.split = split
         self.cache_dir = cache_dir
-        self.dataset = load_dataset(self.DATASET_NAME, split=self.split, cache_dir=self.cache_dir)
+        os.makedirs(self.cache_dir, exist_ok=True)
+        self.dataset = load_dataset(self.DATASET_NAME, split=self.split, cache_dir=self.cache_dir, trust_remote_code=True)
 
     def __iter__(self):
         for item in self.dataset:
@@ -365,16 +367,19 @@ class WikiText103Dataset(IterableDataset):
     DATASET_NAME = "wikitext"
     DATASET_CONFIG = "wikitext-103-raw-v1"
 
-    def __init__(self, split: str, cache_dir: str = None):
+    def __init__(self, split: str, cache_dir: str = HF_CACHE_DIR):
         self.split = split
         self.cache_dir = cache_dir
         # Map common split names
         hf_split = "train" if split == "train" else "validation"
+        # Ensure cache directory exists
+        os.makedirs(self.cache_dir, exist_ok=True)
         self.dataset = load_dataset(
             self.DATASET_NAME,
             self.DATASET_CONFIG,
             split=hf_split,
-            cache_dir=self.cache_dir
+            cache_dir=self.cache_dir,
+            trust_remote_code=True
         )
         print(f"Loaded WikiText-103 {hf_split} split with {len(self.dataset)} examples")
 
@@ -432,14 +437,15 @@ class SQuADDataset(Dataset):
     more than QA-SRL's 5K examples.
     """
 
-    def __init__(self, split: str, tokenizer, max_seq_len: int, version: str = "squad"):
+    def __init__(self, split: str, tokenizer, max_seq_len: int, version: str = "squad", cache_dir: str = HF_CACHE_DIR):
         print(f"Loading and processing SQuAD dataset for '{split}' split...")
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
 
         # Load SQuAD dataset
         hf_split = "train" if split == "train" else "validation"
-        self.dataset = load_dataset(version, split=hf_split)
+        os.makedirs(cache_dir, exist_ok=True)
+        self.dataset = load_dataset(version, split=hf_split, cache_dir=cache_dir, trust_remote_code=True)
         print(f"Loaded SQuAD {hf_split} with {len(self.dataset)} examples")
 
         self.processed_data = self._preprocess()
