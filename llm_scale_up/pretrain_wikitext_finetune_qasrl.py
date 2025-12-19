@@ -16,6 +16,47 @@ DATASET_PATH = "/home/zceccgr/Scratch/downloaded_datasets/qa_srl"
 HF_CACHE_DIR = "/home/zceccgr/Scratch/huggingface_cache"  # Use Scratch for HF cache to avoid home dir issues
 
 
+def verify_cache_exists(cache_dir: str, dataset_name: str) -> bool:
+    """
+    Verify that the HuggingFace cache directory exists and contains data.
+    Returns True if cache appears valid, False otherwise.
+    """
+    print(f"\n[DEBUG] === Cache Verification for '{dataset_name}' ===")
+    print(f"[DEBUG] Cache directory: {cache_dir}")
+    print(f"[DEBUG] Cache directory exists: {os.path.exists(cache_dir)}")
+
+    if os.path.exists(cache_dir):
+        # List contents of cache directory
+        try:
+            contents = os.listdir(cache_dir)
+            print(f"[DEBUG] Cache directory contents ({len(contents)} items):")
+            for item in contents[:10]:  # Show first 10 items
+                item_path = os.path.join(cache_dir, item)
+                if os.path.isdir(item_path):
+                    print(f"[DEBUG]   [DIR]  {item}")
+                else:
+                    size = os.path.getsize(item_path)
+                    print(f"[DEBUG]   [FILE] {item} ({size:,} bytes)")
+            if len(contents) > 10:
+                print(f"[DEBUG]   ... and {len(contents) - 10} more items")
+
+            # Check for dataset-specific subdirectory
+            dataset_dirs = [d for d in contents if dataset_name.replace("_", "") in d.lower() or dataset_name in d.lower()]
+            if dataset_dirs:
+                print(f"[DEBUG] Found matching dataset directories: {dataset_dirs}")
+                return True
+            else:
+                print(f"[DEBUG] WARNING: No directories matching '{dataset_name}' found in cache")
+                return False
+        except Exception as e:
+            print(f"[DEBUG] ERROR listing cache directory: {e}")
+            return False
+    else:
+        print(f"[DEBUG] ERROR: Cache directory does not exist!")
+        print(f"[DEBUG] Please run download_datasets.py on the login node first.")
+        return False
+
+
 def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, last_epoch=-1):
     """
     Create a schedule with a learning rate that decreases linearly from the initial lr set in the optimizer to 0, after
@@ -347,7 +388,25 @@ class NQOpenDataset(IterableDataset):
         self.split = split
         self.cache_dir = cache_dir
         os.makedirs(self.cache_dir, exist_ok=True)
-        self.dataset = load_dataset(self.DATASET_NAME, split=self.split, cache_dir=self.cache_dir, trust_remote_code=True)
+
+        # Verify cache exists before attempting to load
+        print(f"\n[DEBUG] NQOpenDataset initializing for split='{split}'")
+        verify_cache_exists(self.cache_dir, self.DATASET_NAME)
+
+        print(f"[DEBUG] Attempting to load {self.DATASET_NAME} from cache (download_mode='reuse_cache_if_exists')...")
+        try:
+            self.dataset = load_dataset(
+                self.DATASET_NAME,
+                split=self.split,
+                cache_dir=self.cache_dir,
+                download_mode="reuse_cache_if_exists"
+            )
+            print(f"[DEBUG] Successfully loaded {self.DATASET_NAME} {split} split with {len(self.dataset)} examples")
+        except Exception as e:
+            print(f"[DEBUG] ERROR loading {self.DATASET_NAME}: {e}")
+            print(f"[DEBUG] This likely means the dataset was not pre-downloaded.")
+            print(f"[DEBUG] Please run: python download_datasets.py on the login node first.")
+            raise
 
     def __iter__(self):
         for item in self.dataset:
@@ -374,14 +433,26 @@ class WikiText103Dataset(IterableDataset):
         hf_split = "train" if split == "train" else "validation"
         # Ensure cache directory exists
         os.makedirs(self.cache_dir, exist_ok=True)
-        self.dataset = load_dataset(
-            self.DATASET_NAME,
-            self.DATASET_CONFIG,
-            split=hf_split,
-            cache_dir=self.cache_dir,
-            trust_remote_code=True
-        )
-        print(f"Loaded WikiText-103 {hf_split} split with {len(self.dataset)} examples")
+
+        # Verify cache exists before attempting to load
+        print(f"\n[DEBUG] WikiText103Dataset initializing for split='{split}'")
+        verify_cache_exists(self.cache_dir, self.DATASET_NAME)
+
+        print(f"[DEBUG] Attempting to load {self.DATASET_NAME} from cache (download_mode='reuse_cache_if_exists')...")
+        try:
+            self.dataset = load_dataset(
+                self.DATASET_NAME,
+                self.DATASET_CONFIG,
+                split=hf_split,
+                cache_dir=self.cache_dir,
+                download_mode="reuse_cache_if_exists"
+            )
+            print(f"[DEBUG] Successfully loaded WikiText-103 {hf_split} split with {len(self.dataset)} examples")
+        except Exception as e:
+            print(f"[DEBUG] ERROR loading {self.DATASET_NAME}: {e}")
+            print(f"[DEBUG] This likely means the dataset was not pre-downloaded.")
+            print(f"[DEBUG] Please run: python download_datasets.py on the login node first.")
+            raise
 
     def __iter__(self):
         for item in self.dataset:
@@ -438,15 +509,31 @@ class SQuADDataset(Dataset):
     """
 
     def __init__(self, split: str, tokenizer, max_seq_len: int, version: str = "squad", cache_dir: str = HF_CACHE_DIR):
-        print(f"Loading and processing SQuAD dataset for '{split}' split...")
+        print(f"\n[DEBUG] SQuADDataset initializing for split='{split}'")
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
 
         # Load SQuAD dataset
         hf_split = "train" if split == "train" else "validation"
         os.makedirs(cache_dir, exist_ok=True)
-        self.dataset = load_dataset(version, split=hf_split, cache_dir=cache_dir, trust_remote_code=True)
-        print(f"Loaded SQuAD {hf_split} with {len(self.dataset)} examples")
+
+        # Verify cache exists before attempting to load
+        verify_cache_exists(cache_dir, version)
+
+        print(f"[DEBUG] Attempting to load {version} from cache (download_mode='reuse_cache_if_exists')...")
+        try:
+            self.dataset = load_dataset(
+                version,
+                split=hf_split,
+                cache_dir=cache_dir,
+                download_mode="reuse_cache_if_exists"
+            )
+            print(f"[DEBUG] Successfully loaded SQuAD {hf_split} with {len(self.dataset)} examples")
+        except Exception as e:
+            print(f"[DEBUG] ERROR loading {version}: {e}")
+            print(f"[DEBUG] This likely means the dataset was not pre-downloaded.")
+            print(f"[DEBUG] Please run: python download_datasets.py on the login node first.")
+            raise
 
         self.processed_data = self._preprocess()
 
@@ -529,8 +616,24 @@ class QASRLDataset(Dataset):
     """Dataset class for fine-tuning on qa_srl."""
 
     def __init__(self, split, tokenizer, max_seq_len):
-        print(f"Loading and processing qa_srl dataset for '{split}' split...")
-        self.dataset = load_from_disk(DATASET_PATH)[split]
+        print(f"\n[DEBUG] QASRLDataset initializing for split='{split}'")
+        print(f"[DEBUG] Dataset path: {DATASET_PATH}")
+        print(f"[DEBUG] Dataset path exists: {os.path.exists(DATASET_PATH)}")
+
+        if os.path.exists(DATASET_PATH):
+            contents = os.listdir(DATASET_PATH)
+            print(f"[DEBUG] Dataset directory contents: {contents[:5]}{'...' if len(contents) > 5 else ''}")
+        else:
+            print(f"[DEBUG] ERROR: Dataset path does not exist!")
+            print(f"[DEBUG] Please ensure qa_srl dataset is downloaded to: {DATASET_PATH}")
+
+        try:
+            self.dataset = load_from_disk(DATASET_PATH)[split]
+            print(f"[DEBUG] Successfully loaded qa_srl {split} split with {len(self.dataset)} examples")
+        except Exception as e:
+            print(f"[DEBUG] ERROR loading qa_srl: {e}")
+            raise
+
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
         self.processed_data = self._preprocess()
