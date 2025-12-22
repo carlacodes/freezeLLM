@@ -17,7 +17,7 @@
 #$ -l h_rt=16:00:00
 
 # Request 32 gigabyte of RAM (must be an integer followed by M, G, or T)
-#$ -l mem=32G
+#$ -l mem=10G
 
 # Request 10 gigabyte of TMPDIR space (default is 10 GB)
 #$ -l tmpfs=10G
