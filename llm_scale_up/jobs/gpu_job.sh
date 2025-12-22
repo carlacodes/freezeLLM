@@ -13,11 +13,11 @@
 # e.g., MediumQA_1213 -> MediumQA_1213.o<jobid>, MediumQA_1213.e<jobid>
 # ============================================================================
 
-# Request 16 hours of wallclock time (format hours:minutes:seconds).
-#$ -l h_rt=16:00:00
+# Request 48 hours of wallclock time (format hours:minutes:seconds).
+#$ -l h_rt=48:00:00
 
-# Request 8 gigabyte of RAM (must be an integer followed by M, G, or T)
-#$ -l mem=8G
+# Request 32 gigabyte of RAM (must be an integer followed by M, G, or T)
+#$ -l mem=32G
 
 # Request 10 gigabyte of TMPDIR space (default is 10 GB)
 #$ -l tmpfs=10G
