@@ -14,7 +14,7 @@
 # ============================================================================
 
 # Request 48 hours of wallclock time (format hours:minutes:seconds).
-#$ -l h_rt=48:00:00
+#$ -l h_rt=16:00:00
 
 # Request 32 gigabyte of RAM (must be an integer followed by M, G, or T)
 #$ -l mem=32G
