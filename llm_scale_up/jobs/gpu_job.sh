@@ -67,8 +67,11 @@ nvidia-smi
 
 export PYTHONPATH="/home/zceccgr/Scratch/freezeLLM:$PYTHONPATH"
 
+# Disable Python output buffering so we can see real-time progress in job logs
+export PYTHONUNBUFFERED=1
+
 echo "Starting Python script for $MODEL_NAME model..."
-python /home/zceccgr/Scratch/freezeLLM/llm_scale_up/pretrain_wikitext_finetune_qasrl.py \
+python -u /home/zceccgr/Scratch/freezeLLM/llm_scale_up/pretrain_wikitext_finetune_qasrl.py \
     --config_path /home/zceccgr/Scratch/freezeLLM/llm_scale_up/config.json \
     --config_name "$MODEL_SIZE"
 
