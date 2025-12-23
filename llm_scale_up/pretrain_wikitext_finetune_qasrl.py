@@ -949,6 +949,12 @@ if __name__ == "__main__":
                     optimizer_pretrain.step()
                     optimizer_pretrain.zero_grad()
 
+                # Log progress every 500 batches
+                if batch_idx % 500 == 0 and batch_idx > 0:
+                    avg_loss_so_far = total_train_loss / (batch_idx + 1)
+                    current_lr = optimizer_pretrain.param_groups[0]["lr"]
+                    print(f"  [Epoch {epoch}] Batch {batch_idx} | Loss: {avg_loss_so_far:.4f} | LR: {current_lr:.6f}")
+
             avg_train_loss = total_train_loss / (batch_idx + 1)
 
             avg_val_loss = validate_pretrain_epoch(
