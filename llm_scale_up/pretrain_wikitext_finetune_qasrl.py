@@ -383,30 +383,34 @@ class NQOpenDataset(IterableDataset):
     """
 
     DATASET_NAME = "nq_open"
+    _cached_dataset = None  # Class-level cache to avoid multiple loads/locks
 
     def __init__(self, split: str, cache_dir: str = HF_CACHE_DIR):
         self.split = split
         self.cache_dir = cache_dir
         os.makedirs(self.cache_dir, exist_ok=True)
 
-        # Verify cache exists before attempting to load
         print(f"\n[DEBUG] NQOpenDataset initializing for split='{split}'")
-        verify_cache_exists(self.cache_dir, self.DATASET_NAME)
 
-        print(f"[DEBUG] Attempting to load {self.DATASET_NAME} from cache (download_mode='reuse_cache_if_exists')...")
-        try:
-            self.dataset = load_dataset(
-                self.DATASET_NAME,
-                split=self.split,
-                cache_dir=self.cache_dir,
-                download_mode="reuse_cache_if_exists"
-            )
-            print(f"[DEBUG] Successfully loaded {self.DATASET_NAME} {split} split with {len(self.dataset)} examples")
-        except Exception as e:
-            print(f"[DEBUG] ERROR loading {self.DATASET_NAME}: {e}")
-            print(f"[DEBUG] This likely means the dataset was not pre-downloaded.")
-            print(f"[DEBUG] Please run: python download_datasets.py on the login node first.")
-            raise
+        # Load all splits once and cache at class level to avoid lock contention
+        if NQOpenDataset._cached_dataset is None:
+            verify_cache_exists(self.cache_dir, self.DATASET_NAME)
+            print(f"[DEBUG] Loading all {self.DATASET_NAME} splits at once (avoids lock issues)...")
+            try:
+                NQOpenDataset._cached_dataset = load_dataset(
+                    self.DATASET_NAME,
+                    cache_dir=self.cache_dir,
+                    download_mode="reuse_cache_if_exists"
+                )
+                print(f"[DEBUG] Successfully loaded {self.DATASET_NAME} dataset")
+            except Exception as e:
+                print(f"[DEBUG] ERROR loading {self.DATASET_NAME}: {e}")
+                print(f"[DEBUG] Please run: python download_datasets.py on the login node first.")
+                raise
+
+        # Access the specific split from cached dataset
+        self.dataset = NQOpenDataset._cached_dataset[self.split]
+        print(f"[DEBUG] Using {self.DATASET_NAME} {split} split with {len(self.dataset)} examples")
 
     def __iter__(self):
         for item in self.dataset:
@@ -425,6 +429,7 @@ class WikiText103Dataset(IterableDataset):
 
     DATASET_NAME = "wikitext"
     DATASET_CONFIG = "wikitext-103-raw-v1"
+    _cached_dataset = None  # Class-level cache to avoid multiple loads/locks
 
     def __init__(self, split: str, cache_dir: str = HF_CACHE_DIR):
         self.split = split
@@ -434,25 +439,28 @@ class WikiText103Dataset(IterableDataset):
         # Ensure cache directory exists
         os.makedirs(self.cache_dir, exist_ok=True)
 
-        # Verify cache exists before attempting to load
         print(f"\n[DEBUG] WikiText103Dataset initializing for split='{split}'")
-        verify_cache_exists(self.cache_dir, self.DATASET_NAME)
 
-        print(f"[DEBUG] Attempting to load {self.DATASET_NAME} from cache (download_mode='reuse_cache_if_exists')...")
-        try:
-            self.dataset = load_dataset(
-                self.DATASET_NAME,
-                self.DATASET_CONFIG,
-                split=hf_split,
-                cache_dir=self.cache_dir,
-                download_mode="reuse_cache_if_exists"
-            )
-            print(f"[DEBUG] Successfully loaded WikiText-103 {hf_split} split with {len(self.dataset)} examples")
-        except Exception as e:
-            print(f"[DEBUG] ERROR loading {self.DATASET_NAME}: {e}")
-            print(f"[DEBUG] This likely means the dataset was not pre-downloaded.")
-            print(f"[DEBUG] Please run: python download_datasets.py on the login node first.")
-            raise
+        # Load all splits once and cache at class level to avoid lock contention
+        if WikiText103Dataset._cached_dataset is None:
+            verify_cache_exists(self.cache_dir, self.DATASET_NAME)
+            print(f"[DEBUG] Loading all {self.DATASET_NAME} splits at once (avoids lock issues)...")
+            try:
+                WikiText103Dataset._cached_dataset = load_dataset(
+                    self.DATASET_NAME,
+                    self.DATASET_CONFIG,
+                    cache_dir=self.cache_dir,
+                    download_mode="reuse_cache_if_exists"
+                )
+                print(f"[DEBUG] Successfully loaded {self.DATASET_NAME} dataset")
+            except Exception as e:
+                print(f"[DEBUG] ERROR loading {self.DATASET_NAME}: {e}")
+                print(f"[DEBUG] Please run: python download_datasets.py on the login node first.")
+                raise
+
+        # Access the specific split from cached dataset
+        self.dataset = WikiText103Dataset._cached_dataset[hf_split]
+        print(f"[DEBUG] Using WikiText-103 {hf_split} split with {len(self.dataset)} examples")
 
     def __iter__(self):
         for item in self.dataset:
