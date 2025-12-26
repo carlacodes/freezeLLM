@@ -2,6 +2,8 @@ import json
 import os
 import time
 import math
+import signal
+import sys
 from typing import Iterator, Tuple, List
 import torch
 import torch.nn as nn
@@ -11,6 +13,69 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau, LambdaLR
 from torch.utils.data import DataLoader, Dataset, IterableDataset, ConcatDataset
 from transformers import AutoTokenizer
 import argparse
+
+# Global state for signal handler to access current training state
+_training_state = {
+    'model': None,
+    'optimizer': None,
+    'scheduler': None,
+    'epoch': 0,
+    'global_step': 0,
+    'best_val_loss': float('inf'),
+    'epochs_no_improve': 0,
+    'stage': 'pretrain',
+    'checkpoint_path': None,
+    'best_val_f1': None,
+    'active': False,  # Whether training is currently in progress
+}
+
+
+def _signal_handler(signum, frame):
+    """Handle termination signals by saving a checkpoint before exit."""
+    signal_name = signal.Signals(signum).name
+    print(f"\n{'='*60}")
+    print(f"Received {signal_name} signal - saving emergency checkpoint...")
+    print(f"{'='*60}")
+
+    if not _training_state['active']:
+        print("No active training to save. Exiting.")
+        sys.exit(0)
+
+    if _training_state['model'] is None or _training_state['checkpoint_path'] is None:
+        print("Warning: Training state not initialized. Cannot save checkpoint.")
+        sys.exit(1)
+
+    # Save emergency checkpoint
+    emergency_path = _training_state['checkpoint_path'].replace('.pth', '_emergency.pth')
+    try:
+        checkpoint = {
+            'epoch': _training_state['epoch'],
+            'global_step': _training_state['global_step'],
+            'model_state_dict': _training_state['model'].state_dict(),
+            'optimizer_state_dict': _training_state['optimizer'].state_dict() if _training_state['optimizer'] else None,
+            'scheduler_state_dict': _training_state['scheduler'].state_dict() if _training_state['scheduler'] else None,
+            'best_val_loss': _training_state['best_val_loss'],
+            'epochs_no_improve': _training_state['epochs_no_improve'],
+            'stage': _training_state['stage'],
+        }
+        if _training_state['best_val_f1'] is not None:
+            checkpoint['best_val_f1'] = _training_state['best_val_f1']
+
+        torch.save(checkpoint, emergency_path)
+        print(f"Emergency checkpoint saved to: {emergency_path}")
+        print(f"Stage: {_training_state['stage']}, Epoch: {_training_state['epoch']}, Step: {_training_state['global_step']}")
+        print(f"\nTo resume, use: --resume {emergency_path}")
+    except Exception as e:
+        print(f"Error saving emergency checkpoint: {e}")
+
+    sys.exit(0)
+
+
+def setup_signal_handlers():
+    """Register signal handlers for graceful shutdown."""
+    signal.signal(signal.SIGTERM, _signal_handler)  # Cluster scheduler termination
+    signal.signal(signal.SIGINT, _signal_handler)   # Ctrl+C
+    print("Signal handlers registered for graceful checkpoint saving on termination.")
 
 DATASET_PATH = "/home/zceccgr/Scratch/downloaded_datasets/qa_srl"
 HF_CACHE_DIR = "/home/zceccgr/Scratch/huggingface_cache"  # Use Scratch for HF cache to avoid home dir issues
@@ -796,7 +861,45 @@ def validate_qa_epoch(model, dataloader, device):
     return avg_loss, val_acc, val_f1
 
 
+def save_checkpoint(path, model, optimizer, scheduler, epoch, global_step, best_val_loss, epochs_no_improve, stage="pretrain", best_val_f1=None):
+    """Save a checkpoint that can be used to resume training."""
+    checkpoint = {
+        'epoch': epoch,
+        'global_step': global_step,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
+        'best_val_loss': best_val_loss,
+        'epochs_no_improve': epochs_no_improve,
+        'stage': stage,
+    }
+    if best_val_f1 is not None:
+        checkpoint['best_val_f1'] = best_val_f1
+    torch.save(checkpoint, path)
+    print(f"Checkpoint saved to {path}")
+
+
+def load_checkpoint(path, model, optimizer, scheduler=None, device='cuda'):
+    """Load a checkpoint to resume training."""
+    if not os.path.exists(path):
+        return None
+
+    print(f"Loading checkpoint from {path}")
+    checkpoint = torch.load(path, map_location=device)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    if scheduler and checkpoint.get('scheduler_state_dict'):
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+    print(f"Resumed from epoch {checkpoint['epoch']}, global_step {checkpoint['global_step']}")
+    print(f"Best val loss so far: {checkpoint['best_val_loss']:.4f}, epochs without improvement: {checkpoint['epochs_no_improve']}")
+    return checkpoint
+
+
 if __name__ == "__main__":
+    # Setup signal handlers for graceful shutdown on cluster termination
+    setup_signal_handlers()
+
     parser = argparse.ArgumentParser(description="Pre-train and fine-tune a ToyLLM.")
     parser.add_argument(
         '--config_path',
@@ -810,6 +913,18 @@ if __name__ == "__main__":
         default='tiny',
         choices=['tiny', 'small', 'base', 'medium'],
         help='The name of the configuration to use from the JSON file.'
+    )
+    parser.add_argument(
+        '--resume',
+        type=str,
+        default=None,
+        help='Path to checkpoint to resume training from (e.g., models/TinyQA_20251225-195310/checkpoint.pth)'
+    )
+    parser.add_argument(
+        '--checkpoint_interval',
+        type=int,
+        default=1,
+        help='Save checkpoint every N epochs (default: 1)'
     )
     args = parser.parse_args()
 
@@ -847,14 +962,24 @@ if __name__ == "__main__":
         f"Instantiated Base Model: {model_config.name} with {num_params:,} trainable parameters."
     )
 
-    date_now = time.strftime("%Y%m%d-%H%M%S")
-    model_dir = f"models/{model_config.name}_{date_now}"
+    # Handle resume vs new training
+    if args.resume:
+        # Extract model_dir from resume path
+        model_dir = os.path.dirname(args.resume)
+        print(f"Resuming training from checkpoint: {args.resume}")
+        print(f"Using existing model directory: {model_dir}")
+    else:
+        date_now = time.strftime("%Y%m%d-%H%M%S")
+        model_dir = f"models/{model_config.name}_{date_now}"
+
     PRETRAINED_MODEL_PATH = os.path.join(model_dir, "toy_llm_unified_pretrained.pth")
     FINETUNED_MODEL_PATH = os.path.join(model_dir, "toy_llm_qasrl_finetuned.pth")
+    CHECKPOINT_PATH = os.path.join(model_dir, "checkpoint.pth")
 
-    os.makedirs(os.path.dirname(PRETRAINED_MODEL_PATH), exist_ok=True)
-    os.makedirs(os.path.dirname(FINETUNED_MODEL_PATH), exist_ok=True)
+    os.makedirs(model_dir, exist_ok=True)
+    print(f"Model directory: {model_dir}")
     print(f"Best pre-trained model will be saved to: {PRETRAINED_MODEL_PATH}")
+    print(f"Checkpoints will be saved to: {CHECKPOINT_PATH}")
 
     if not SKIP_PRETRAIN:
         # Check if we should use additional pre-training data
@@ -913,13 +1038,45 @@ if __name__ == "__main__":
         best_val_loss = float("inf")
         epochs_no_improve = 0
         global_step = 0
+        start_epoch = 1
 
         # Get gradient accumulation steps for pre-training (default to 1)
         pretrain_grad_accum = train_params.get('gradient_accumulation_steps', 1)
         effective_pretrain_batch = train_params['batch_size_pretrain'] * pretrain_grad_accum
         print(f"Pre-training batch size: {train_params['batch_size_pretrain']} | Gradient accumulation: {pretrain_grad_accum} | Effective batch size: {effective_pretrain_batch}")
 
-        for epoch in range(1, train_params['num_pretrain_epochs'] + 1):
+        # Resume from checkpoint if provided
+        if args.resume and os.path.exists(args.resume):
+            checkpoint = load_checkpoint(args.resume, pretrain_model, optimizer_pretrain, scheduler_pretrain, DEVICE)
+            if checkpoint and checkpoint.get('stage') == 'pretrain':
+                start_epoch = checkpoint['epoch'] + 1
+                global_step = checkpoint['global_step']
+                best_val_loss = checkpoint['best_val_loss']
+                epochs_no_improve = checkpoint['epochs_no_improve']
+                print(f"Resuming pre-training from epoch {start_epoch}")
+            elif checkpoint and checkpoint.get('stage') == 'finetune':
+                print("Checkpoint is from fine-tuning stage. Skipping pre-training.")
+                SKIP_PRETRAIN = True
+
+        # Initialize training state for signal handler
+        _training_state.update({
+            'model': pretrain_model,
+            'optimizer': optimizer_pretrain,
+            'scheduler': scheduler_pretrain,
+            'checkpoint_path': CHECKPOINT_PATH,
+            'stage': 'pretrain',
+            'active': True,
+        })
+
+        for epoch in range(start_epoch, train_params['num_pretrain_epochs'] + 1):
+            # Update training state for signal handler
+            _training_state.update({
+                'epoch': epoch,
+                'global_step': global_step,
+                'best_val_loss': best_val_loss,
+                'epochs_no_improve': epochs_no_improve,
+            })
+
             pretrain_model.train()
             total_train_loss = 0
             optimizer_pretrain.zero_grad()
@@ -930,6 +1087,8 @@ if __name__ == "__main__":
                 train_dataloader_clm
             ):
                 global_step += 1
+                # Update global step for signal handler
+                _training_state['global_step'] = global_step
                 if clm_inputs is None:
                     continue
 
@@ -990,7 +1149,19 @@ if __name__ == "__main__":
                 print(
                     f"\nEarly stopping triggered after {train_params['pretrain_patience']} epochs without improvement."
                 )
+                # Save final checkpoint before stopping
+                save_checkpoint(
+                    CHECKPOINT_PATH, pretrain_model, optimizer_pretrain, scheduler_pretrain,
+                    epoch, global_step, best_val_loss, epochs_no_improve, stage="pretrain"
+                )
                 break
+
+            # Save checkpoint at regular intervals
+            if epoch % args.checkpoint_interval == 0:
+                save_checkpoint(
+                    CHECKPOINT_PATH, pretrain_model, optimizer_pretrain, scheduler_pretrain,
+                    epoch, global_step, best_val_loss, epochs_no_improve, stage="pretrain"
+                )
 
         print(f"\nLoading best pretrained model from {PRETRAINED_MODEL_PATH}")
         pretrain_model.load_state_dict(torch.load(PRETRAINED_MODEL_PATH))
@@ -1154,8 +1325,44 @@ if __name__ == "__main__":
         final_train_loss = 0.0
         epochs_no_improve = 0
         global_finetune_step = 0
+        start_epoch_finetune = 1
 
-        for epoch_num in range(1, train_params['num_finetune_epochs'] + 1):
+        # Resume from checkpoint if provided and it's a fine-tuning checkpoint
+        FINETUNE_CHECKPOINT_PATH = os.path.join(model_dir, "finetune_checkpoint.pth")
+        if args.resume:
+            # Check for fine-tuning checkpoint
+            finetune_ckpt_path = os.path.join(model_dir, "finetune_checkpoint.pth")
+            if os.path.exists(finetune_ckpt_path):
+                checkpoint = load_checkpoint(finetune_ckpt_path, qa_model, optimizer_finetune, scheduler_finetune if not isinstance(scheduler_finetune, ReduceLROnPlateau) else None, DEVICE)
+                if checkpoint and checkpoint.get('stage') == 'finetune':
+                    start_epoch_finetune = checkpoint['epoch'] + 1
+                    global_finetune_step = checkpoint['global_step']
+                    best_val_loss = checkpoint['best_val_loss']
+                    epochs_no_improve = checkpoint['epochs_no_improve']
+                    best_val_f1 = checkpoint.get('best_val_f1', 0.0)
+                    print(f"Resuming fine-tuning from epoch {start_epoch_finetune}")
+
+        # Update training state for signal handler (fine-tuning)
+        _training_state.update({
+            'model': qa_model,
+            'optimizer': optimizer_finetune,
+            'scheduler': scheduler_finetune if not isinstance(scheduler_finetune, ReduceLROnPlateau) else None,
+            'checkpoint_path': FINETUNE_CHECKPOINT_PATH,
+            'stage': 'finetune',
+            'active': True,
+            'best_val_f1': best_val_f1,
+        })
+
+        for epoch_num in range(start_epoch_finetune, train_params['num_finetune_epochs'] + 1):
+            # Update training state for signal handler
+            _training_state.update({
+                'epoch': epoch_num,
+                'global_step': global_finetune_step,
+                'best_val_loss': best_val_loss,
+                'epochs_no_improve': epochs_no_improve,
+                'best_val_f1': best_val_f1,
+            })
+
             avg_train_loss = finetune_qa_epoch(
                 qa_model, qa_train_dataloader, optimizer_finetune, DEVICE, epoch_num,
                 gradient_accumulation_steps=gradient_accumulation_steps
@@ -1194,7 +1401,23 @@ if __name__ == "__main__":
             if epochs_no_improve >= finetune_patience:
                 print(f"\nEarly stopping triggered after {finetune_patience} epochs without improvement.")
                 print(f"Best validation loss: {best_val_loss:.4f} | Best F1: {best_val_f1:.4f}")
+                # Save final checkpoint before stopping
+                save_checkpoint(
+                    FINETUNE_CHECKPOINT_PATH, qa_model, optimizer_finetune,
+                    scheduler_finetune if not isinstance(scheduler_finetune, ReduceLROnPlateau) else None,
+                    epoch_num, global_finetune_step, best_val_loss, epochs_no_improve,
+                    stage="finetune", best_val_f1=best_val_f1
+                )
                 break
+
+            # Save checkpoint at regular intervals
+            if epoch_num % args.checkpoint_interval == 0:
+                save_checkpoint(
+                    FINETUNE_CHECKPOINT_PATH, qa_model, optimizer_finetune,
+                    scheduler_finetune if not isinstance(scheduler_finetune, ReduceLROnPlateau) else None,
+                    epoch_num, global_finetune_step, best_val_loss, epochs_no_improve,
+                    stage="finetune", best_val_f1=best_val_f1
+                )
 
         print("\nFine-tuning finished.")
         print(f"Best fine-tuned QA model state_dict saved to {FINETUNED_MODEL_PATH}")
