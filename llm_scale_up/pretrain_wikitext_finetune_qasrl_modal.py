@@ -144,7 +144,7 @@ CONFIGS = {
 
 @app.function(
     image=image,
-    gpu="T4",  # Default GPU, can be overridden via command line
+    gpu="A10G",  # A10G is a good balance of speed and cost for small models
     timeout=86400,  # 24 hours max
     volumes={
         "/data": data_volume,
@@ -1335,7 +1335,7 @@ def main(
     skip_finetune: bool = False,
     resume: str = None,
     checkpoint_interval: int = 1,
-    gpu: str = "T4",
+    gpu: str = "A10G",
     list_saved: bool = False,
 ):
     """
@@ -1370,10 +1370,9 @@ def main(
         print(f"Resume from: {resume}")
     print(f"{'='*60}\n")
 
-    # Create a new function with the specified GPU
-    train_with_gpu = train.with_options(gpu=gpu)
-
-    result = train_with_gpu.remote(
+    # Note: GPU is set in the @app.function decorator (default: T4)
+    # To use a different GPU, edit the decorator or use Modal's CLI override
+    result = train.remote(
         config_name=config_name,
         skip_pretrain=skip_pretrain,
         skip_finetune=skip_finetune,
