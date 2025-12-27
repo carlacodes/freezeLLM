@@ -5,3 +5,4 @@
 .models
 models
 llm_scale_up/models
+*.egg-info/

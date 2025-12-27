@@ -144,7 +144,7 @@ CONFIGS = {
 
 @app.function(
     image=image,
-    gpu="A10G",  # A10G is a good balance of speed and cost for small models
+    gpu="A10G",  # Override via CLI: modal run script.py::train --gpu A100
     timeout=86400,  # 24 hours max
     volumes={
         "/data": data_volume,
@@ -437,8 +437,7 @@ def train(
                 NQOpenDataset._cached_dataset = load_dataset(
                     "nq_open",
                     cache_dir=self.cache_dir,
-                    trust_remote_code=True,
-                )
+                                    )
                 print("Successfully loaded nq_open dataset")
 
             self.dataset = NQOpenDataset._cached_dataset[self.split]
@@ -467,8 +466,7 @@ def train(
                     "wikitext",
                     "wikitext-103-raw-v1",
                     cache_dir=self.cache_dir,
-                    trust_remote_code=True,
-                )
+                                    )
                 print("Successfully loaded WikiText-103 dataset")
 
             self.dataset = WikiText103Dataset._cached_dataset[hf_split]
@@ -523,8 +521,7 @@ def train(
                 "squad",
                 split=hf_split,
                 cache_dir=cache_dir,
-                trust_remote_code=True,
-            )
+                            )
             print(f"Successfully loaded SQuAD {hf_split} with {len(self.dataset)} examples")
 
             self.processed_data = self._preprocess()
@@ -614,8 +611,7 @@ def train(
                 "qa_srl",
                 split=hf_split,
                 cache_dir=cache_dir,
-                trust_remote_code=True,
-            )
+                            )
             print(f"Successfully loaded QA-SRL {hf_split} with {len(self.dataset)} examples")
 
             self.processed_data = self._preprocess()
