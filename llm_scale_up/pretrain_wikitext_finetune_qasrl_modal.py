@@ -699,7 +699,8 @@ def train(
                         token_start_index = -1
                         token_end_index = -1
 
-                        for idx, (start, end) in zip(context_indices, offset_mapping):
+                        for idx in context_indices:
+                            start, end = offset_mapping[idx]
                             if start <= char_start < end:
                                 token_start_index = idx
                             if start < char_end <= end:
@@ -859,7 +860,7 @@ def train(
         final_f1 = sum(f1_scores) / len(f1_scores)
         return exact_match, final_f1
 
-    def finetune_qa_epoch(model, dataloader, optimizer, device, epoch_num, gradient_accumulation_steps=1, log_interval=50):
+    def finetune_qa_epoch(model, dataloader, optimizer, device, epoch_num, gradient_accumulation_steps=1, log_interval=50, scheduler=None):
         model.train()
         total_loss = 0
         optimizer.zero_grad()
@@ -887,6 +888,8 @@ def train(
             if (batch_idx + 1) % gradient_accumulation_steps == 0 or (batch_idx + 1) == len(dataloader):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
+                if scheduler is not None:
+                    scheduler.step()  # Step warmup scheduler per optimizer step
                 optimizer.zero_grad()
 
             if batch_idx % log_interval == 0 and batch_idx > 0:
