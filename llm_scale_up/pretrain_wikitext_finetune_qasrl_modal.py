@@ -153,7 +153,7 @@ CONFIGS = {
 @app.function(
     image=image,
     gpu="A10G",  # Override via CLI: modal run script.py::train --gpu A100
-    timeout=604800,  # 7 days max
+    timeout=86400,  # 24 hours (Modal maximum)
     volumes={
         "/data": data_volume,
         "/models": models_volume,
@@ -165,6 +165,7 @@ def train(
     skip_finetune: bool = False,
     resume_path: str = None,
     checkpoint_interval: int = 1,
+    _continuation_count: int = 0,
 ):
     """
     Main training function that runs on Modal GPU.
@@ -190,6 +191,25 @@ def train(
     from torch.utils.data import DataLoader, Dataset, IterableDataset, ConcatDataset
     from transformers import AutoTokenizer
 
+    # ============================================================
+    # Timeout and Auto-Continuation Settings
+    # ============================================================
+    JOB_START_TIME = time.time()
+    MAX_RUNTIME_SECONDS = 23 * 3600  # 23 hours (1 hour buffer before 24h limit)
+    TIMEOUT_CHECK_INTERVAL = 100  # Check timeout every N batches
+
+    def is_approaching_timeout():
+        """Check if we're approaching the Modal timeout limit."""
+        elapsed = time.time() - JOB_START_TIME
+        return elapsed > MAX_RUNTIME_SECONDS
+
+    def get_elapsed_time_str():
+        """Get human-readable elapsed time."""
+        elapsed = time.time() - JOB_START_TIME
+        hours = int(elapsed // 3600)
+        minutes = int((elapsed % 3600) // 60)
+        return f"{hours}h {minutes}m"
+
     # Set environment variables for HuggingFace
     HF_CACHE_DIR = "/data/huggingface_cache"
     os.makedirs(HF_CACHE_DIR, exist_ok=True)
@@ -198,6 +218,8 @@ def train(
 
     print(f"Starting training with config: {config_name}")
     print(f"Skip pretrain: {skip_pretrain}, Skip finetune: {skip_finetune}")
+    print(f"Continuation count: {_continuation_count}")
+    print(f"Max runtime: {MAX_RUNTIME_SECONDS / 3600:.1f} hours")
 
     # ============================================================
     # Model Definitions
@@ -885,7 +907,7 @@ def train(
         avg_loss = total_loss / len(dataloader) if len(dataloader) > 0 else 0
         return avg_loss, val_acc, val_f1
 
-    def save_checkpoint(path, model, optimizer, scheduler, epoch, global_step, best_val_loss, epochs_no_improve, stage="pretrain", best_val_f1=None):
+    def save_checkpoint(path, model, optimizer, scheduler, epoch, global_step, best_val_loss, epochs_no_improve, stage="pretrain", best_val_f1=None, model_dir=None):
         checkpoint = {
             'epoch': epoch,
             'global_step': global_step,
@@ -895,6 +917,7 @@ def train(
             'best_val_loss': best_val_loss,
             'epochs_no_improve': epochs_no_improve,
             'stage': stage,
+            'model_dir': model_dir,
         }
         if best_val_f1 is not None:
             checkpoint['best_val_f1'] = best_val_f1
@@ -1038,6 +1061,7 @@ def train(
                     skip_pretrain = True
 
         if not skip_pretrain:
+            timeout_triggered = False
             for epoch in range(start_epoch, train_params['num_pretrain_epochs'] + 1):
                 pretrain_model.train()
                 total_train_loss = 0
@@ -1047,6 +1071,45 @@ def train(
                     global_step += 1
                     if clm_inputs is None:
                         continue
+
+                    # Check for timeout periodically
+                    if batch_idx % TIMEOUT_CHECK_INTERVAL == 0 and is_approaching_timeout():
+                        print(f"\n{'='*60}")
+                        print(f"TIMEOUT APPROACHING after {get_elapsed_time_str()}")
+                        print(f"Saving checkpoint and spawning continuation...")
+                        print(f"{'='*60}")
+
+                        # Save checkpoint
+                        save_checkpoint(
+                            CHECKPOINT_PATH, pretrain_model, optimizer_pretrain, scheduler_pretrain,
+                            epoch, global_step, best_val_loss, epochs_no_improve, stage="pretrain",
+                            model_dir=model_dir
+                        )
+                        models_volume.commit()
+
+                        # Get relative checkpoint path for spawning
+                        relative_checkpoint = CHECKPOINT_PATH.replace("/models/", "")
+
+                        # Spawn continuation
+                        train.spawn(
+                            config_name=config_name,
+                            skip_pretrain=False,
+                            skip_finetune=skip_finetune,
+                            resume_path=relative_checkpoint,
+                            checkpoint_interval=checkpoint_interval,
+                            _continuation_count=_continuation_count + 1,
+                        )
+
+                        print(f"Continuation job spawned. This job will now exit.")
+                        timeout_triggered = True
+                        return {
+                            "status": "continued",
+                            "model_dir": model_dir,
+                            "checkpoint_path": CHECKPOINT_PATH,
+                            "continuation_count": _continuation_count + 1,
+                            "pretrained_path": PRETRAINED_MODEL_PATH,
+                            "finetuned_path": FINETUNED_MODEL_PATH,
+                        }
 
                     if global_step < train_params['warmup_steps']:
                         lr_scale = global_step / train_params['warmup_steps']
@@ -1073,7 +1136,10 @@ def train(
                     if batch_idx % 500 == 0 and batch_idx > 0:
                         avg_loss_so_far = total_train_loss / (batch_idx + 1)
                         current_lr = optimizer_pretrain.param_groups[0]["lr"]
-                        print(f"  [Epoch {epoch}] Batch {batch_idx} | Loss: {avg_loss_so_far:.4f} | LR: {current_lr:.6f}")
+                        print(f"  [Epoch {epoch}] Batch {batch_idx} | Loss: {avg_loss_so_far:.4f} | LR: {current_lr:.6f} | Elapsed: {get_elapsed_time_str()}")
+
+                if timeout_triggered:
+                    break
 
                 avg_train_loss = total_train_loss / (batch_idx + 1)
 
@@ -1100,18 +1166,55 @@ def train(
                     print(f"\nEarly stopping triggered after {train_params['pretrain_patience']} epochs without improvement.")
                     save_checkpoint(
                         CHECKPOINT_PATH, pretrain_model, optimizer_pretrain, scheduler_pretrain,
-                        epoch, global_step, best_val_loss, epochs_no_improve, stage="pretrain"
+                        epoch, global_step, best_val_loss, epochs_no_improve, stage="pretrain",
+                        model_dir=model_dir
                     )
                     break
+
+                # Check timeout at end of epoch too
+                if is_approaching_timeout():
+                    print(f"\n{'='*60}")
+                    print(f"TIMEOUT APPROACHING at end of epoch {epoch} after {get_elapsed_time_str()}")
+                    print(f"Saving checkpoint and spawning continuation...")
+                    print(f"{'='*60}")
+
+                    save_checkpoint(
+                        CHECKPOINT_PATH, pretrain_model, optimizer_pretrain, scheduler_pretrain,
+                        epoch, global_step, best_val_loss, epochs_no_improve, stage="pretrain",
+                        model_dir=model_dir
+                    )
+                    models_volume.commit()
+
+                    relative_checkpoint = CHECKPOINT_PATH.replace("/models/", "")
+                    train.spawn(
+                        config_name=config_name,
+                        skip_pretrain=False,
+                        skip_finetune=skip_finetune,
+                        resume_path=relative_checkpoint,
+                        checkpoint_interval=checkpoint_interval,
+                        _continuation_count=_continuation_count + 1,
+                    )
+
+                    print(f"Continuation job spawned. This job will now exit.")
+                    return {
+                        "status": "continued",
+                        "model_dir": model_dir,
+                        "checkpoint_path": CHECKPOINT_PATH,
+                        "continuation_count": _continuation_count + 1,
+                        "pretrained_path": PRETRAINED_MODEL_PATH,
+                        "finetuned_path": FINETUNED_MODEL_PATH,
+                    }
 
                 if epoch % checkpoint_interval == 0:
                     save_checkpoint(
                         CHECKPOINT_PATH, pretrain_model, optimizer_pretrain, scheduler_pretrain,
-                        epoch, global_step, best_val_loss, epochs_no_improve, stage="pretrain"
+                        epoch, global_step, best_val_loss, epochs_no_improve, stage="pretrain",
+                        model_dir=model_dir
                     )
 
-            print(f"\nLoading best pretrained model from {PRETRAINED_MODEL_PATH}")
-            pretrain_model.load_state_dict(torch.load(PRETRAINED_MODEL_PATH))
+            if not timeout_triggered:
+                print(f"\nLoading best pretrained model from {PRETRAINED_MODEL_PATH}")
+                pretrain_model.load_state_dict(torch.load(PRETRAINED_MODEL_PATH))
 
             # Commit volume to persist data
             models_volume.commit()
@@ -1237,7 +1340,7 @@ def train(
             print(
                 f"--- End of Finetune Epoch {epoch_num} | Train Loss: {avg_train_loss:.4f} | "
                 f"Val Loss: {avg_val_loss:.4f} | Val Acc: {val_acc:.4f} | Val F1: {val_f1:.4f} "
-                f"| LR: {current_lr:.6f} ---"
+                f"| LR: {current_lr:.6f} | Elapsed: {get_elapsed_time_str()} ---"
             )
 
             if avg_val_loss < best_val_loss:
@@ -1253,12 +1356,47 @@ def train(
                 print(f"\nEarly stopping triggered after {finetune_patience} epochs without improvement.")
                 break
 
+            # Check for timeout at end of each finetuning epoch
+            if is_approaching_timeout():
+                print(f"\n{'='*60}")
+                print(f"TIMEOUT APPROACHING during finetuning after {get_elapsed_time_str()}")
+                print(f"Saving checkpoint and spawning continuation...")
+                print(f"{'='*60}")
+
+                save_checkpoint(
+                    FINETUNE_CHECKPOINT_PATH, qa_model, optimizer_finetune,
+                    scheduler_finetune if finetune_warmup_steps > 0 else None,
+                    epoch_num, global_finetune_step, best_val_loss, epochs_no_improve,
+                    stage="finetune", best_val_f1=best_val_f1, model_dir=model_dir
+                )
+                models_volume.commit()
+
+                relative_checkpoint = FINETUNE_CHECKPOINT_PATH.replace("/models/", "")
+                train.spawn(
+                    config_name=config_name,
+                    skip_pretrain=True,  # Pretraining is done
+                    skip_finetune=False,
+                    resume_path=relative_checkpoint,
+                    checkpoint_interval=checkpoint_interval,
+                    _continuation_count=_continuation_count + 1,
+                )
+
+                print(f"Continuation job spawned. This job will now exit.")
+                return {
+                    "status": "continued",
+                    "model_dir": model_dir,
+                    "checkpoint_path": FINETUNE_CHECKPOINT_PATH,
+                    "continuation_count": _continuation_count + 1,
+                    "pretrained_path": PRETRAINED_MODEL_PATH,
+                    "finetuned_path": FINETUNED_MODEL_PATH,
+                }
+
             if epoch_num % checkpoint_interval == 0:
                 save_checkpoint(
                     FINETUNE_CHECKPOINT_PATH, qa_model, optimizer_finetune,
                     scheduler_finetune if finetune_warmup_steps > 0 else None,
                     epoch_num, global_finetune_step, best_val_loss, epochs_no_improve,
-                    stage="finetune", best_val_f1=best_val_f1
+                    stage="finetune", best_val_f1=best_val_f1, model_dir=model_dir
                 )
 
         print("\nFine-tuning finished.")
