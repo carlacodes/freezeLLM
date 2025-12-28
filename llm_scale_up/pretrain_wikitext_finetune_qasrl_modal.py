@@ -109,7 +109,7 @@ CONFIGS = {
         "training_params": {
             "max_seq_len": 512,
             "dropout_rate": 0.1,
-            "pretrain_lr": 2e-4,  # Scaled up 2x for larger batch
+            "pretrain_lr": 3e-4,  # Increased for larger effective batch (linear scaling rule)
             "num_pretrain_epochs": 100,
             "pretrain_patience": 10,
             "warmup_steps": 1000,
