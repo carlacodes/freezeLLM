@@ -56,8 +56,8 @@ CONFIGS = {
         },
         "training_params": {
             "max_seq_len": 512,
-            "dropout_rate": 0.15,
-            "pretrain_lr": 6e-4,  # Scaled up 2x for larger batch
+            "dropout_rate": 0.05,  # Reduced from 0.15 - tiny models underfit with high dropout
+            "pretrain_lr": 5e-4,  # Slightly reduced for stability
             "num_pretrain_epochs": 100,
             "pretrain_patience": 10,
             "warmup_steps": 500,
@@ -83,7 +83,7 @@ CONFIGS = {
         "training_params": {
             "max_seq_len": 512,
             "dropout_rate": 0.1,
-            "pretrain_lr": 6e-4,  # Scaled up 2x for larger batch
+            "pretrain_lr": 3e-4,  # Reduced from 6e-4 - 19M params needs lower LR than tiny
             "num_pretrain_epochs": 100,
             "pretrain_patience": 10,
             "warmup_steps": 500,
@@ -113,8 +113,8 @@ CONFIGS = {
             "num_pretrain_epochs": 100,
             "pretrain_patience": 10,
             "warmup_steps": 1000,
-            "batch_size_pretrain": 16,  # Up from 8 (A10G can handle this)
-            "gradient_accumulation_steps": 2,  # Reduced from 4
+            "batch_size_pretrain": 16,
+            "gradient_accumulation_steps": 4,  # Effective batch=64 for stable 50M param training
             "samples_per_epoch": 800_000,  # ~40 min epochs, scaled for base model capacity (~50M params)
             "num_finetune_epochs": 30,
             "finetune_lr": 1e-5,  # Scaled up 2x
@@ -1053,7 +1053,7 @@ def train(
         )
 
         optimizer_pretrain = optim.AdamW(
-            pretrain_model.parameters(), lr=train_params['pretrain_lr'], weight_decay=0.1
+            pretrain_model.parameters(), lr=train_params['pretrain_lr'], weight_decay=0.01
         )
         scheduler_pretrain = ReduceLROnPlateau(
             optimizer_pretrain, mode="min", factor=0.5, patience=2
