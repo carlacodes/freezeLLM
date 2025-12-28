@@ -63,6 +63,7 @@ CONFIGS = {
             "warmup_steps": 500,
             "batch_size_pretrain": 64,  # Up from 16 (A10G can handle this easily)
             "gradient_accumulation_steps": 1,  # Reduced from 2
+            "samples_per_epoch": 200_000,  # ~12 min epochs, appropriate for tiny model capacity
             "num_finetune_epochs": 30,
             "finetune_lr": 4e-5,  # Scaled up 2x
             "finetune_patience": 8,
@@ -88,6 +89,7 @@ CONFIGS = {
             "warmup_steps": 500,
             "batch_size_pretrain": 32,  # Up from 8 (A10G can handle this)
             "gradient_accumulation_steps": 2,  # Reduced from 4
+            "samples_per_epoch": 400_000,  # ~25 min epochs, scaled for small model capacity (~19M params)
             "num_finetune_epochs": 30,
             "finetune_lr": 2e-5,  # Scaled up 2x
             "finetune_patience": 8,
@@ -113,6 +115,7 @@ CONFIGS = {
             "warmup_steps": 1000,
             "batch_size_pretrain": 16,  # Up from 8 (A10G can handle this)
             "gradient_accumulation_steps": 2,  # Reduced from 4
+            "samples_per_epoch": 800_000,  # ~40 min epochs, scaled for base model capacity (~50M params)
             "num_finetune_epochs": 30,
             "finetune_lr": 1e-5,  # Scaled up 2x
             "finetune_patience": 8,
@@ -138,6 +141,7 @@ CONFIGS = {
             "warmup_steps": 2000,
             "batch_size_pretrain": 32,
             "gradient_accumulation_steps": 2,
+            "samples_per_epoch": 1_500_000,  # Near full dataset, scaled for medium model capacity (~100M+ params)
             "num_finetune_epochs": 40,
             "finetune_lr": 3e-6,
             "finetune_patience": 10,
@@ -511,17 +515,23 @@ def train(
     class CombinedPretrainDataset(IterableDataset):
         """Combines multiple pre-training datasets by interleaving them."""
 
-        def __init__(self, datasets: List[IterableDataset], weights: List[float] = None):
+        def __init__(self, datasets: List[IterableDataset], weights: List[float] = None, max_samples: int = None):
             self.datasets = datasets
             self.weights = weights if weights else [1.0 / len(datasets)] * len(datasets)
             total = sum(self.weights)
             self.weights = [w / total for w in self.weights]
+            self.max_samples = max_samples  # Cap samples per epoch for scaled training
 
         def __iter__(self):
             iterators = [iter(ds) for ds in self.datasets]
             exhausted = [False] * len(self.datasets)
+            sample_count = 0
 
             while not all(exhausted):
+                # Check if we've hit the max samples limit
+                if self.max_samples is not None and sample_count >= self.max_samples:
+                    break
+
                 available_indices = [i for i, e in enumerate(exhausted) if not e]
                 if not available_indices:
                     break
@@ -534,6 +544,7 @@ def train(
 
                 try:
                     yield next(iterators[idx])
+                    sample_count += 1
                 except StopIteration:
                     exhausted[idx] = True
                     iterators[idx] = iter(self.datasets[idx])
@@ -974,12 +985,15 @@ def train(
     num_params = sum(p.numel() for p in base_llm.parameters() if p.requires_grad)
     print(f"Instantiated Base Model: {model_config.name} with {num_params:,} trainable parameters.")
 
-    # Setup model directory
+    # Setup model directory (includes samples_per_epoch for reproducibility)
+    samples_per_epoch = train_params.get('samples_per_epoch', None)
+    samples_suffix = f"_spe{samples_per_epoch // 1000}k" if samples_per_epoch else "_speFull"
+
     if resume_path:
         model_dir = os.path.dirname(os.path.join("/models", resume_path))
     else:
         date_now = time.strftime("%Y%m%d-%H%M%S")
-        model_dir = f"/models/{model_config.name}_{date_now}"
+        model_dir = f"/models/{model_config.name}{samples_suffix}_{date_now}"
 
     PRETRAINED_MODEL_PATH = os.path.join(model_dir, "toy_llm_unified_pretrained.pth")
     FINETUNED_MODEL_PATH = os.path.join(model_dir, "toy_llm_qasrl_finetuned.pth")
@@ -995,13 +1009,19 @@ def train(
     if not skip_pretrain:
         use_additional_data = train_params.get('use_additional_pretrain_data', False)
 
+        # Get samples_per_epoch for scaled training
+        samples_per_epoch = train_params.get('samples_per_epoch', None)
+        if samples_per_epoch:
+            print(f"Using scaled training: {samples_per_epoch:,} samples per epoch")
+
         if use_additional_data:
             print(f"\n--- Starting CLM Pre-training on nq_open + WikiText-103 ---")
             nq_train = NQOpenDataset(split="train")
             wiki_train = WikiText103Dataset(split="train")
             train_dataset_clm = CombinedPretrainDataset(
                 [nq_train, wiki_train],
-                weights=[0.3, 0.7]
+                weights=[0.3, 0.7],
+                max_samples=samples_per_epoch
             )
 
             nq_val = NQOpenDataset(split="validation")
@@ -1009,6 +1029,7 @@ def train(
             val_dataset_clm = CombinedPretrainDataset(
                 [nq_val, wiki_val],
                 weights=[0.3, 0.7]
+                # No max_samples for validation - use full validation set
             )
         else:
             print(f"\n--- Starting CLM Pre-training on nq_open ---")
