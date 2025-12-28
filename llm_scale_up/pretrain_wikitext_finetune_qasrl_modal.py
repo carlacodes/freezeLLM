@@ -253,7 +253,7 @@ def train(
     class ToyMultiHeadAttention(nn.Module):
         """Multi-Head Attention module for the ToyLLM."""
 
-        def __init__(self, hidden_size: int, n_heads: int):
+        def __init__(self, hidden_size: int, n_heads: int, dropout_rate: float = 0.1):
             super().__init__()
             assert hidden_size % n_heads == 0
             self.hidden_size = hidden_size
@@ -263,6 +263,7 @@ def train(
             self.k_proj = nn.Linear(hidden_size, hidden_size)
             self.v_proj = nn.Linear(hidden_size, hidden_size)
             self.out_proj = nn.Linear(hidden_size, hidden_size)
+            self.attn_dropout = nn.Dropout(dropout_rate)  # Attention probability dropout
 
         def forward(self, q, k, v, attention_mask=None, is_causal=False):
             B, T, C = q.shape
@@ -282,6 +283,7 @@ def train(
                 att_scores = att_scores.masked_fill(attention_mask == 0, float("-inf"))
 
             att_probs = torch.softmax(att_scores, dim=-1)
+            att_probs = self.attn_dropout(att_probs)  # Apply attention dropout
             output = (att_probs @ v_h).transpose(1, 2).contiguous().view(B, T, C)
             return self.out_proj(output)
 
@@ -312,7 +314,7 @@ def train(
         ):
             super().__init__()
             self.norm1 = nn.LayerNorm(hidden_size)
-            self.attention = ToyMultiHeadAttention(hidden_size, n_heads)
+            self.attention = ToyMultiHeadAttention(hidden_size, n_heads, dropout_rate)
             self.dropout1 = nn.Dropout(dropout_rate)
             self.norm2 = nn.LayerNorm(hidden_size)
             ffn_hidden_size = hidden_size * ffn_expansion_factor
