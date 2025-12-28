@@ -18,9 +18,17 @@ Usage:
 """
 
 import modal
+import sys
 
-# Define the Modal app
-app = modal.App("llm-pretrain-finetune")
+# Parse config name from command line to create unique app name
+_config_name = "tiny"  # default
+for i, arg in enumerate(sys.argv):
+    if arg == "--config-name" and i + 1 < len(sys.argv):
+        _config_name = sys.argv[i + 1]
+        break
+
+# Define the Modal app with config-specific name
+app = modal.App(f"llm-pretrain-{_config_name}")
 
 # Create persistent volumes for data and models
 data_volume = modal.Volume.from_name("llm-training-data", create_if_missing=True)
@@ -49,17 +57,17 @@ CONFIGS = {
         "training_params": {
             "max_seq_len": 512,
             "dropout_rate": 0.15,
-            "pretrain_lr": 3e-4,
+            "pretrain_lr": 6e-4,  # Scaled up 2x for larger batch
             "num_pretrain_epochs": 100,
             "pretrain_patience": 10,
             "warmup_steps": 500,
-            "batch_size_pretrain": 16,
-            "gradient_accumulation_steps": 2,
+            "batch_size_pretrain": 64,  # Up from 16 (A10G can handle this easily)
+            "gradient_accumulation_steps": 1,  # Reduced from 2
             "num_finetune_epochs": 30,
-            "finetune_lr": 2e-5,
+            "finetune_lr": 4e-5,  # Scaled up 2x
             "finetune_patience": 8,
             "finetune_warmup_steps": 200,
-            "batch_size_qa": 16,
+            "batch_size_qa": 64,  # Up from 16
             "use_additional_pretrain_data": True,
             "use_squad_finetune": True
         }
@@ -74,17 +82,17 @@ CONFIGS = {
         "training_params": {
             "max_seq_len": 512,
             "dropout_rate": 0.1,
-            "pretrain_lr": 3e-4,
+            "pretrain_lr": 6e-4,  # Scaled up 2x for larger batch
             "num_pretrain_epochs": 100,
             "pretrain_patience": 10,
             "warmup_steps": 500,
-            "batch_size_pretrain": 8,
-            "gradient_accumulation_steps": 4,
+            "batch_size_pretrain": 32,  # Up from 8 (A10G can handle this)
+            "gradient_accumulation_steps": 2,  # Reduced from 4
             "num_finetune_epochs": 30,
-            "finetune_lr": 1e-5,
+            "finetune_lr": 2e-5,  # Scaled up 2x
             "finetune_patience": 8,
             "finetune_warmup_steps": 300,
-            "batch_size_qa": 8,
+            "batch_size_qa": 32,  # Up from 8
             "use_additional_pretrain_data": True,
             "use_squad_finetune": True
         }
@@ -99,17 +107,17 @@ CONFIGS = {
         "training_params": {
             "max_seq_len": 512,
             "dropout_rate": 0.1,
-            "pretrain_lr": 1e-4,
+            "pretrain_lr": 2e-4,  # Scaled up 2x for larger batch
             "num_pretrain_epochs": 100,
             "pretrain_patience": 10,
             "warmup_steps": 1000,
-            "batch_size_pretrain": 8,
-            "gradient_accumulation_steps": 4,
+            "batch_size_pretrain": 16,  # Up from 8 (A10G can handle this)
+            "gradient_accumulation_steps": 2,  # Reduced from 4
             "num_finetune_epochs": 30,
-            "finetune_lr": 5e-6,
+            "finetune_lr": 1e-5,  # Scaled up 2x
             "finetune_patience": 8,
             "finetune_warmup_steps": 500,
-            "batch_size_qa": 8,
+            "batch_size_qa": 16,  # Up from 8
             "use_additional_pretrain_data": True,
             "use_squad_finetune": True
         }
@@ -145,7 +153,7 @@ CONFIGS = {
 @app.function(
     image=image,
     gpu="A10G",  # Override via CLI: modal run script.py::train --gpu A100
-    timeout=86400,  # 24 hours max
+    timeout=604800,  # 7 days max
     volumes={
         "/data": data_volume,
         "/models": models_volume,
