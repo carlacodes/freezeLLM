@@ -61,14 +61,14 @@ CONFIGS = {
             "num_pretrain_epochs": 100,
             "pretrain_patience": 10,
             "warmup_steps": 500,
-            "batch_size_pretrain": 64,  # Up from 16 (A10G can handle this easily)
-            "gradient_accumulation_steps": 1,  # Reduced from 2
+            "batch_size_pretrain": 128,  # A10G 24GB can handle 128 for tiny model
+            "gradient_accumulation_steps": 1,
             "samples_per_epoch": 200_000,  # ~12 min epochs, appropriate for tiny model capacity
             "num_finetune_epochs": 30,
             "finetune_lr": 4e-5,  # Scaled up 2x
             "finetune_patience": 8,
             "finetune_warmup_steps": 200,
-            "batch_size_qa": 64,  # Up from 16
+            "batch_size_qa": 128,  # A10G can handle 128 for tiny model
             "use_additional_pretrain_data": True,
             "use_squad_finetune": True
         }
@@ -83,18 +83,18 @@ CONFIGS = {
         "training_params": {
             "max_seq_len": 512,
             "dropout_rate": 0.1,
-            "pretrain_lr": 3e-4,  # Reduced from 6e-4 - 19M params needs lower LR than tiny
+            "pretrain_lr": 2e-4,  # Lowered from 3e-4 for stability with ~2M params
             "num_pretrain_epochs": 100,
             "pretrain_patience": 10,
             "warmup_steps": 500,
-            "batch_size_pretrain": 32,  # Up from 8 (A10G can handle this)
-            "gradient_accumulation_steps": 2,  # Reduced from 4
-            "samples_per_epoch": 400_000,  # ~25 min epochs, scaled for small model capacity (~19M params)
+            "batch_size_pretrain": 64,  # A10G 24GB can handle 64 for small model
+            "gradient_accumulation_steps": 1,  # Reduced from 2 since batch size is larger
+            "samples_per_epoch": 400_000,  # ~25 min epochs, scaled for small model capacity (~2M params)
             "num_finetune_epochs": 30,
-            "finetune_lr": 2e-5,  # Scaled up 2x
+            "finetune_lr": 2e-5,
             "finetune_patience": 8,
             "finetune_warmup_steps": 300,
-            "batch_size_qa": 32,  # Up from 8
+            "batch_size_qa": 64,  # A10G can handle 64 for small model
             "use_additional_pretrain_data": True,
             "use_squad_finetune": True
         }
@@ -1351,9 +1351,12 @@ def train(
         FINETUNE_CHECKPOINT_PATH = os.path.join(model_dir, "finetune_checkpoint.pth")
 
         for epoch_num in range(start_epoch_finetune, train_params['num_finetune_epochs'] + 1):
+            # Pass scheduler only for warmup (LambdaLR), not for ReduceLROnPlateau
+            warmup_scheduler = scheduler_finetune if finetune_warmup_steps > 0 else None
             avg_train_loss = finetune_qa_epoch(
                 qa_model, qa_train_dataloader, optimizer_finetune, DEVICE, epoch_num,
-                gradient_accumulation_steps=gradient_accumulation_steps
+                gradient_accumulation_steps=gradient_accumulation_steps,
+                scheduler=warmup_scheduler
             )
             global_finetune_step += steps_per_epoch
 
