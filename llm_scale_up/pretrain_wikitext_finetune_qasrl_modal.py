@@ -61,14 +61,14 @@ CONFIGS = {
             "num_pretrain_epochs": 100,
             "pretrain_patience": 10,
             "warmup_steps": 500,
-            "batch_size_pretrain": 128,  # A10G 24GB can handle 128 for tiny model
+            "batch_size_pretrain": 64,  # A10G with seq_len=512
             "gradient_accumulation_steps": 1,
             "samples_per_epoch": 200_000,  # ~12 min epochs, appropriate for tiny model capacity
             "num_finetune_epochs": 30,
             "finetune_lr": 4e-5,  # Scaled up 2x
             "finetune_patience": 8,
             "finetune_warmup_steps": 200,
-            "batch_size_qa": 128,  # A10G can handle 128 for tiny model
+            "batch_size_qa": 64,  # A10G with seq_len=512
             "use_additional_pretrain_data": True,
             "use_squad_finetune": True
         }
@@ -87,14 +87,14 @@ CONFIGS = {
             "num_pretrain_epochs": 100,
             "pretrain_patience": 10,
             "warmup_steps": 500,
-            "batch_size_pretrain": 64,  # A10G 24GB can handle 64 for small model
-            "gradient_accumulation_steps": 1,  # Reduced from 2 since batch size is larger
+            "batch_size_pretrain": 128,  # A10G 24GB can handle 128 for small model
+            "gradient_accumulation_steps": 1,
             "samples_per_epoch": 400_000,  # ~25 min epochs, scaled for small model capacity (~2M params)
             "num_finetune_epochs": 30,
             "finetune_lr": 2e-5,
             "finetune_patience": 8,
             "finetune_warmup_steps": 300,
-            "batch_size_qa": 64,  # A10G can handle 64 for small model
+            "batch_size_qa": 128,  # A10G can handle 128 for small model
             "use_additional_pretrain_data": True,
             "use_squad_finetune": True
         }
