@@ -34,15 +34,32 @@ app = modal.App(f"llm-pretrain-{_config_name}")
 data_volume = modal.Volume.from_name("llm-training-data", create_if_missing=True)
 models_volume = modal.Volume.from_name("llm-models", create_if_missing=True)
 
+# Pre-download datasets during image build to avoid GPU idle time
+def download_datasets():
+    from datasets import load_dataset
+    # QA-SRL requires trust_remote_code due to custom loading script
+    load_dataset("qa_srl", split="train", trust_remote_code=True)
+    load_dataset("qa_srl", split="validation", trust_remote_code=True)
+    load_dataset("squad", split="train")
+    load_dataset("squad", split="validation")
+    load_dataset("nq_open", split="train")
+    load_dataset("nq_open", split="validation")
+    load_dataset("wikitext", "wikitext-103-raw-v1", split="train")
+    load_dataset("wikitext", "wikitext-103-raw-v1", split="validation")
+
+
 # Define the image with all required dependencies
+# Note: datasets<3.0.0 required because qa_srl uses a loading script
+# which is no longer supported in datasets 3.0+
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
         "torch>=2.0.0",
         "transformers>=4.30.0",
-        "datasets>=2.14.0",
+        "datasets>=2.14.0,<3.0.0",  # Pin to <3.0 for qa_srl loading script support
         "accelerate>=0.21.0",
     )
+    .run_function(download_datasets)
 )
 
 # Configuration definitions (embedded to avoid file dependencies)
@@ -169,6 +186,9 @@ def train(
     skip_finetune: bool = False,
     resume_path: str = None,
     checkpoint_interval: int = 1,
+    freeze_llm: bool = False,
+    finetune_samples: int = None,
+    pretrain_data: str = "wiki",
     _continuation_count: int = 0,
 ):
     """
@@ -180,6 +200,9 @@ def train(
         skip_finetune: Skip the fine-tuning phase
         resume_path: Path to checkpoint to resume from (relative to /models)
         checkpoint_interval: Save checkpoint every N epochs
+        freeze_llm: Freeze LLM weights during finetuning (linear probe mode)
+        finetune_samples: Limit finetuning to N samples (for few-shot experiments)
+        pretrain_data: Pretraining data to use ('wiki' or 'wiki+nq')
     """
     import json
     import os
@@ -654,7 +677,8 @@ def train(
                 "qa_srl",
                 split=hf_split,
                 cache_dir=cache_dir,
-                            )
+                trust_remote_code=True,
+            )
             print(f"Successfully loaded QA-SRL {hf_split} with {len(self.dataset)} examples")
 
             self.processed_data = self._preprocess()
@@ -994,11 +1018,47 @@ def train(
     samples_per_epoch = train_params.get('samples_per_epoch', None)
     samples_suffix = f"_spe{samples_per_epoch // 1000}k" if samples_per_epoch else "_speFull"
 
+    # Auto-resume: find latest checkpoint for this config if no resume_path provided
+    def find_latest_checkpoint(model_name_prefix):
+        """Find the most recent checkpoint for this model configuration."""
+        models_dir = "/models"
+        if not os.path.exists(models_dir):
+            return None
+
+        matching_dirs = []
+        for dirname in os.listdir(models_dir):
+            if dirname.startswith(model_name_prefix):
+                checkpoint_path = os.path.join(models_dir, dirname, "checkpoint.pth")
+                if os.path.exists(checkpoint_path):
+                    mtime = os.path.getmtime(checkpoint_path)
+                    matching_dirs.append((checkpoint_path, mtime, dirname))
+
+        if not matching_dirs:
+            return None
+
+        # Return the most recently modified checkpoint
+        matching_dirs.sort(key=lambda x: x[1], reverse=True)
+        return matching_dirs[0][0], matching_dirs[0][2]  # (checkpoint_path, dirname)
+
     if resume_path:
         model_dir = os.path.dirname(os.path.join("/models", resume_path))
     else:
-        date_now = time.strftime("%Y%m%d-%H%M%S")
-        model_dir = f"/models/{model_config.name}{samples_suffix}_{date_now}"
+        # Check for existing checkpoint to auto-resume from
+        model_prefix = f"{model_config.name}{samples_suffix}"
+        latest = find_latest_checkpoint(model_prefix)
+
+        if latest:
+            checkpoint_path, dirname = latest
+            print(f"\n{'='*60}")
+            print(f"AUTO-RESUME: Found existing checkpoint!")
+            print(f"  Directory: {dirname}")
+            print(f"  Checkpoint: {checkpoint_path}")
+            print(f"{'='*60}\n")
+            resume_path = checkpoint_path.replace("/models/", "")
+            model_dir = os.path.join("/models", dirname)
+        else:
+            date_now = time.strftime("%Y%m%d-%H%M%S")
+            model_dir = f"/models/{model_config.name}{samples_suffix}_{date_now}"
 
     PRETRAINED_MODEL_PATH = os.path.join(model_dir, "toy_llm_unified_pretrained.pth")
     FINETUNED_MODEL_PATH = os.path.join(model_dir, "toy_llm_qasrl_finetuned.pth")
@@ -1012,15 +1072,15 @@ def train(
     # ============================================================
 
     if not skip_pretrain:
-        use_additional_data = train_params.get('use_additional_pretrain_data', False)
-
         # Get samples_per_epoch for scaled training
         samples_per_epoch = train_params.get('samples_per_epoch', None)
         if samples_per_epoch:
             print(f"Using scaled training: {samples_per_epoch:,} samples per epoch")
 
-        if use_additional_data:
-            print(f"\n--- Starting CLM Pre-training on nq_open + WikiText-103 ---")
+        # Select pretraining data based on flag
+        if pretrain_data == "wiki+nq":
+            print(f"\n--- Starting CLM Pre-training on WikiText-103 + nq_open ---")
+            print("WARNING: nq_open contains QA-format text which may leak task patterns into pretraining")
             nq_train = NQOpenDataset(split="train")
             wiki_train = WikiText103Dataset(split="train")
             train_dataset_clm = CombinedPretrainDataset(
@@ -1036,10 +1096,28 @@ def train(
                 weights=[0.3, 0.7]
                 # No max_samples for validation - use full validation set
             )
-        else:
-            print(f"\n--- Starting CLM Pre-training on nq_open ---")
-            train_dataset_clm = NQOpenDataset(split="train")
-            val_dataset_clm = NQOpenDataset(split="validation")
+        else:  # Default: wiki only (cleaner for emergence research)
+            print(f"\n--- Starting CLM Pre-training on WikiText-103 only ---")
+            print("Using WikiText-103 only (no QA-format data) for clean emergence testing")
+            wiki_train = WikiText103Dataset(split="train")
+            wiki_val = WikiText103Dataset(split="validation")
+
+            # Wrap in a simple dataset with max_samples support
+            class LimitedIterableDataset(IterableDataset):
+                def __init__(self, dataset, max_samples=None):
+                    self.dataset = dataset
+                    self.max_samples = max_samples
+
+                def __iter__(self):
+                    count = 0
+                    for item in self.dataset:
+                        if self.max_samples and count >= self.max_samples:
+                            break
+                        yield item
+                        count += 1
+
+            train_dataset_clm = LimitedIterableDataset(wiki_train, max_samples=samples_per_epoch)
+            val_dataset_clm = wiki_val
 
         pretrain_model = ToyLLMForPretraining(base_llm).to(DEVICE)
 
@@ -1272,6 +1350,15 @@ def train(
         except FileNotFoundError:
             print(f"WARNING: Pre-trained model not found. Fine-tuning from random init.")
 
+        # Freeze LLM if requested (linear probe mode)
+        if freeze_llm:
+            print("\n*** FREEZE MODE: Freezing LLM weights, only training QA head ***")
+            for param in qa_model.llm.parameters():
+                param.requires_grad = False
+            trainable_params = sum(p.numel() for p in qa_model.parameters() if p.requires_grad)
+            total_params = sum(p.numel() for p in qa_model.parameters())
+            print(f"Trainable parameters: {trainable_params:,} / {total_params:,} ({100*trainable_params/total_params:.2f}%)")
+
         # Load QA-SRL dataset (primary fine-tuning dataset)
         qa_train_dataset = QASRLDataset(
             split="train", tokenizer=tokenizer, max_seq_len=train_params['max_seq_len']
@@ -1279,6 +1366,13 @@ def train(
         qa_val_dataset = QASRLDataset(
             split="validation", tokenizer=tokenizer, max_seq_len=train_params['max_seq_len']
         )
+
+        # Limit training samples for few-shot experiments
+        if finetune_samples is not None and finetune_samples < len(qa_train_dataset):
+            print(f"\n*** FEW-SHOT MODE: Using only {finetune_samples} training samples ***")
+            from torch.utils.data import Subset
+            indices = list(range(finetune_samples))
+            qa_train_dataset = Subset(qa_train_dataset, indices)
 
         # Optionally add SQuAD dataset for more training data
         if use_squad:
@@ -1508,6 +1602,9 @@ def main(
     checkpoint_interval: int = 1,
     gpu: str = "A10G",
     list_saved: bool = False,
+    freeze_llm: bool = False,
+    finetune_samples: int = None,
+    pretrain_data: str = "wiki",
 ):
     """
     Main entry point for running training on Modal.
@@ -1520,6 +1617,9 @@ def main(
         checkpoint_interval: Save checkpoint every N epochs
         gpu: GPU type to use ('T4', 'A10G', 'A100', 'H100')
         list_saved: List saved models instead of training
+        freeze_llm: Freeze LLM weights during finetuning (linear probe mode)
+        finetune_samples: Limit finetuning to N samples (for few-shot experiments)
+        pretrain_data: Pretraining data ('wiki' or 'wiki+nq'). Default 'wiki' for clean emergence testing.
     """
     if list_saved:
         models = list_models.remote()
@@ -1535,8 +1635,12 @@ def main(
     print(f"{'='*60}")
     print(f"Config: {config_name}")
     print(f"GPU: {gpu}")
+    print(f"Pretrain data: {pretrain_data}")
     print(f"Skip pretrain: {skip_pretrain}")
     print(f"Skip finetune: {skip_finetune}")
+    print(f"Freeze LLM: {freeze_llm}")
+    if finetune_samples:
+        print(f"Finetune samples: {finetune_samples}")
     if resume:
         print(f"Resume from: {resume}")
     print(f"{'='*60}\n")
@@ -1549,6 +1653,9 @@ def main(
         skip_finetune=skip_finetune,
         resume_path=resume,
         checkpoint_interval=checkpoint_interval,
+        freeze_llm=freeze_llm,
+        finetune_samples=finetune_samples,
+        pretrain_data=pretrain_data,
     )
 
     print(f"\n{'='*60}")
