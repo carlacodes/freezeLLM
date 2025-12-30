@@ -65,6 +65,10 @@ image = (
 # Configuration definitions (embedded to avoid file dependencies)
 # Note: All models use identical pretraining stopping criteria (200 epochs, patience=20)
 # to ensure fair comparison across scales. Models will converge at different epochs.
+#
+# GPU recommendations:
+#   - tiny, small, base: A10G (default)
+#   - medium: A100-80GB (for batch=96 without OOM)
 CONFIGS = {
     "tiny": {
         "llm_config": {
@@ -80,14 +84,15 @@ CONFIGS = {
             "num_pretrain_epochs": 200,  # Generous cap, let early stopping decide
             "pretrain_patience": 20,  # Consistent across all scales
             "warmup_steps": 500,
-            "batch_size_pretrain": 64,  # A10G with seq_len=512
+            "batch_size_pretrain": 64,  # A10G - near max due to vocab size (30K) output logits
             "gradient_accumulation_steps": 1,
             "samples_per_epoch": 200_000,  # ~12 min epochs, appropriate for tiny model capacity
             "num_finetune_epochs": 30,
-            "finetune_lr": 4e-5,  # Scaled up 2x
+            "finetune_lr": 4e-5,
             "finetune_patience": 8,
             "finetune_warmup_steps": 200,
-            "batch_size_qa": 64,  # A10G with seq_len=512
+            "batch_size_qa": 64,
+            "recommended_gpu": "A10G",
             "use_additional_pretrain_data": True,
             "use_squad_finetune": True
         }
@@ -106,14 +111,15 @@ CONFIGS = {
             "num_pretrain_epochs": 200,  # Generous cap, let early stopping decide
             "pretrain_patience": 20,  # Consistent across all scales
             "warmup_steps": 500,
-            "batch_size_pretrain": 32,  # A10G with seq_len=512 (small model needs more memory)
-            "gradient_accumulation_steps": 2,  # Effective batch = 64
+            "batch_size_pretrain": 48,  # A10G optimized - no grad accumulation needed
+            "gradient_accumulation_steps": 1,  # Faster than accumulating
             "samples_per_epoch": 400_000,  # ~25 min epochs, scaled for small model capacity (~2M params)
             "num_finetune_epochs": 30,
             "finetune_lr": 2e-5,
             "finetune_patience": 8,
             "finetune_warmup_steps": 300,
-            "batch_size_qa": 32,  # A10G with seq_len=512
+            "batch_size_qa": 48,
+            "recommended_gpu": "A10G",
             "use_additional_pretrain_data": True,
             "use_squad_finetune": True
         }
@@ -128,18 +134,19 @@ CONFIGS = {
         "training_params": {
             "max_seq_len": 512,
             "dropout_rate": 0.1,
-            "pretrain_lr": 3e-4,  # Increased for larger effective batch (linear scaling rule)
+            "pretrain_lr": 2e-4,  # Adjusted for batch=32 (was 3e-4 for effective batch=48)
             "num_pretrain_epochs": 200,  # Generous cap, let early stopping decide
             "pretrain_patience": 20,  # Consistent across all scales
             "warmup_steps": 1000,
-            "batch_size_pretrain": 16,
-            "gradient_accumulation_steps": 4,  # Effective batch=64 for stable 50M param training
+            "batch_size_pretrain": 32,  # A10G - no grad accumulation for faster training
+            "gradient_accumulation_steps": 1,  # Faster than accumulating
             "samples_per_epoch": 800_000,  # ~40 min epochs, scaled for base model capacity (~50M params)
             "num_finetune_epochs": 30,
-            "finetune_lr": 1e-5,  # Scaled up 2x
+            "finetune_lr": 1e-5,
             "finetune_patience": 8,
             "finetune_warmup_steps": 500,
-            "batch_size_qa": 16,  # Up from 8
+            "batch_size_qa": 32,
+            "recommended_gpu": "A10G",
             "use_additional_pretrain_data": True,
             "use_squad_finetune": True
         }
@@ -154,18 +161,19 @@ CONFIGS = {
         "training_params": {
             "max_seq_len": 512,
             "dropout_rate": 0.1,
-            "pretrain_lr": 5e-5,
+            "pretrain_lr": 1e-4,  # Increased for larger batch (linear scaling rule)
             "num_pretrain_epochs": 200,  # Generous cap, let early stopping decide
             "pretrain_patience": 20,  # Consistent across all scales
             "warmup_steps": 2000,
-            "batch_size_pretrain": 32,
-            "gradient_accumulation_steps": 2,
+            "batch_size_pretrain": 96,  # A100-80GB optimized - double throughput
+            "gradient_accumulation_steps": 1,  # Faster on A100 with larger batch
             "samples_per_epoch": 1_500_000,  # Near full dataset, scaled for medium model capacity (~100M+ params)
             "num_finetune_epochs": 40,
             "finetune_lr": 3e-6,
             "finetune_patience": 10,
             "finetune_warmup_steps": 1000,
-            "batch_size_qa": 32,
+            "batch_size_qa": 96,
+            "recommended_gpu": "A100-80GB",  # Required for batch=96 without OOM
             "use_additional_pretrain_data": True,
             "use_squad_finetune": True
         }
@@ -173,16 +181,8 @@ CONFIGS = {
 }
 
 
-@app.function(
-    image=image,
-    gpu="A10G",  # Override via CLI: modal run script.py::train --gpu A100
-    timeout=86400,  # 24 hours (Modal maximum)
-    volumes={
-        "/data": data_volume,
-        "/models": models_volume,
-    },
-)
-def train(
+# Training function factory - the actual implementation
+def _train_impl(
     config_name: str = "tiny",
     skip_pretrain: bool = False,
     skip_finetune: bool = False,
@@ -250,6 +250,19 @@ def train(
     print(f"Skip pretrain: {skip_pretrain}, Skip finetune: {skip_finetune}")
     print(f"Continuation count: {_continuation_count}")
     print(f"Max runtime: {MAX_RUNTIME_SECONDS / 3600:.1f} hours")
+
+    # Check GPU recommendation
+    recommended_gpu = CONFIGS[config_name]["training_params"].get("recommended_gpu", "A10G")
+    if torch.cuda.is_available():
+        current_gpu = torch.cuda.get_device_name(0)
+        if recommended_gpu == "A100" and "A100" not in current_gpu:
+            print(f"\n{'!'*60}")
+            print(f"WARNING: Config '{config_name}' recommends A100 GPU for batch_size=48")
+            print(f"Current GPU: {current_gpu}")
+            print(f"You may experience OOM errors. To use A100:")
+            print(f"  1. Change @app.function decorator: gpu='A100'")
+            print(f"  2. Or reduce batch_size in config")
+            print(f"{'!'*60}\n")
 
     # ============================================================
     # Model Definitions
@@ -1570,6 +1583,78 @@ def train(
     }
 
 
+# GPU-specific wrapper functions - these call the shared implementation
+@app.function(
+    image=image,
+    gpu="A10G",  # For tiny, small, base configs
+    timeout=86400,
+    volumes={"/data": data_volume, "/models": models_volume},
+)
+def train_a10g(
+    config_name: str = "tiny",
+    skip_pretrain: bool = False,
+    skip_finetune: bool = False,
+    resume_path: str = None,
+    checkpoint_interval: int = 1,
+    freeze_llm: bool = False,
+    finetune_samples: int = None,
+    pretrain_data: str = "wiki",
+    _continuation_count: int = 0,
+):
+    """Training function using A10G GPU (for tiny, small, base configs)."""
+    return _train_impl(
+        config_name=config_name,
+        skip_pretrain=skip_pretrain,
+        skip_finetune=skip_finetune,
+        resume_path=resume_path,
+        checkpoint_interval=checkpoint_interval,
+        freeze_llm=freeze_llm,
+        finetune_samples=finetune_samples,
+        pretrain_data=pretrain_data,
+        _continuation_count=_continuation_count,
+    )
+
+
+@app.function(
+    image=image,
+    gpu="A100-80GB",  # For medium config - 80GB needed for batch=96
+    timeout=86400,
+    volumes={"/data": data_volume, "/models": models_volume},
+)
+def train_a100(
+    config_name: str = "medium",
+    skip_pretrain: bool = False,
+    skip_finetune: bool = False,
+    resume_path: str = None,
+    checkpoint_interval: int = 1,
+    freeze_llm: bool = False,
+    finetune_samples: int = None,
+    pretrain_data: str = "wiki",
+    _continuation_count: int = 0,
+):
+    """Training function using A100 GPU (for medium config)."""
+    return _train_impl(
+        config_name=config_name,
+        skip_pretrain=skip_pretrain,
+        skip_finetune=skip_finetune,
+        resume_path=resume_path,
+        checkpoint_interval=checkpoint_interval,
+        freeze_llm=freeze_llm,
+        finetune_samples=finetune_samples,
+        pretrain_data=pretrain_data,
+        _continuation_count=_continuation_count,
+    )
+
+
+# Alias for backwards compatibility - routes to appropriate GPU automatically
+def train_remote(config_name, **kwargs):
+    """Route to appropriate GPU based on config."""
+    if config_name == "medium":
+        return train_a100.remote(config_name=config_name, **kwargs)
+    else:
+        return train_a10g.remote(config_name=config_name, **kwargs)
+
+
 @app.function(
     image=image,
     volumes={"/models": models_volume},
@@ -1647,11 +1732,14 @@ def main(
                 print(f"    - {f}")
         return
 
+    # Auto-select GPU based on config
+    selected_gpu = "A100" if config_name == "medium" else "A10G"
+
     print(f"\n{'='*60}")
     print(f"Starting Modal Training Job")
     print(f"{'='*60}")
     print(f"Config: {config_name}")
-    print(f"GPU: {gpu}")
+    print(f"GPU: {selected_gpu} (auto-selected)")
     print(f"Pretrain data: {pretrain_data}")
     print(f"Skip pretrain: {skip_pretrain}")
     print(f"Skip finetune: {skip_finetune}")
@@ -1662,9 +1750,8 @@ def main(
         print(f"Resume from: {resume}")
     print(f"{'='*60}\n")
 
-    # Note: GPU is set in the @app.function decorator (default: T4)
-    # To use a different GPU, edit the decorator or use Modal's CLI override
-    result = train.remote(
+    # Route to appropriate GPU based on config
+    result = train_remote(
         config_name=config_name,
         skip_pretrain=skip_pretrain,
         skip_finetune=skip_finetune,
