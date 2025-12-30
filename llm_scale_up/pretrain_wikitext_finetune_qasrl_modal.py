@@ -63,6 +63,8 @@ image = (
 )
 
 # Configuration definitions (embedded to avoid file dependencies)
+# Note: All models use identical pretraining stopping criteria (200 epochs, patience=20)
+# to ensure fair comparison across scales. Models will converge at different epochs.
 CONFIGS = {
     "tiny": {
         "llm_config": {
@@ -75,8 +77,8 @@ CONFIGS = {
             "max_seq_len": 512,
             "dropout_rate": 0.05,  # Reduced from 0.15 - tiny models underfit with high dropout
             "pretrain_lr": 5e-4,  # Slightly reduced for stability
-            "num_pretrain_epochs": 100,
-            "pretrain_patience": 10,
+            "num_pretrain_epochs": 200,  # Generous cap, let early stopping decide
+            "pretrain_patience": 20,  # Consistent across all scales
             "warmup_steps": 500,
             "batch_size_pretrain": 64,  # A10G with seq_len=512
             "gradient_accumulation_steps": 1,
@@ -101,8 +103,8 @@ CONFIGS = {
             "max_seq_len": 512,
             "dropout_rate": 0.1,
             "pretrain_lr": 2e-4,  # Lowered from 3e-4 for stability with ~2M params
-            "num_pretrain_epochs": 100,
-            "pretrain_patience": 10,
+            "num_pretrain_epochs": 200,  # Generous cap, let early stopping decide
+            "pretrain_patience": 20,  # Consistent across all scales
             "warmup_steps": 500,
             "batch_size_pretrain": 32,  # A10G with seq_len=512 (small model needs more memory)
             "gradient_accumulation_steps": 2,  # Effective batch = 64
@@ -127,8 +129,8 @@ CONFIGS = {
             "max_seq_len": 512,
             "dropout_rate": 0.1,
             "pretrain_lr": 3e-4,  # Increased for larger effective batch (linear scaling rule)
-            "num_pretrain_epochs": 100,
-            "pretrain_patience": 10,
+            "num_pretrain_epochs": 200,  # Generous cap, let early stopping decide
+            "pretrain_patience": 20,  # Consistent across all scales
             "warmup_steps": 1000,
             "batch_size_pretrain": 16,
             "gradient_accumulation_steps": 4,  # Effective batch=64 for stable 50M param training
@@ -153,8 +155,8 @@ CONFIGS = {
             "max_seq_len": 512,
             "dropout_rate": 0.1,
             "pretrain_lr": 5e-5,
-            "num_pretrain_epochs": 100,
-            "pretrain_patience": 15,
+            "num_pretrain_epochs": 200,  # Generous cap, let early stopping decide
+            "pretrain_patience": 20,  # Consistent across all scales
             "warmup_steps": 2000,
             "batch_size_pretrain": 32,
             "gradient_accumulation_steps": 2,
@@ -205,6 +207,7 @@ def train(
         pretrain_data: Pretraining data to use ('wiki' or 'wiki+nq')
     """
     import json
+    import math
     import os
     import time
     import random
@@ -1040,11 +1043,14 @@ def train(
         matching_dirs.sort(key=lambda x: x[1], reverse=True)
         return matching_dirs[0][0], matching_dirs[0][2]  # (checkpoint_path, dirname)
 
+    # Add _frozen suffix to distinguish frozen probe runs from full finetuning
+    frozen_suffix = "_frozen" if freeze_llm else ""
+
     if resume_path:
         model_dir = os.path.dirname(os.path.join("/models", resume_path))
     else:
         # Check for existing checkpoint to auto-resume from
-        model_prefix = f"{model_config.name}{samples_suffix}"
+        model_prefix = f"{model_config.name}{samples_suffix}{frozen_suffix}"
         latest = find_latest_checkpoint(model_prefix)
 
         if latest:
@@ -1058,7 +1064,7 @@ def train(
             model_dir = os.path.join("/models", dirname)
         else:
             date_now = time.strftime("%Y%m%d-%H%M%S")
-            model_dir = f"/models/{model_config.name}{samples_suffix}_{date_now}"
+            model_dir = f"/models/{model_config.name}{samples_suffix}{frozen_suffix}_{date_now}"
 
     PRETRAINED_MODEL_PATH = os.path.join(model_dir, "toy_llm_unified_pretrained.pth")
     FINETUNED_MODEL_PATH = os.path.join(model_dir, "toy_llm_qasrl_finetuned.pth")
@@ -1251,10 +1257,16 @@ def train(
                     pretrain_model, val_dataloader_clm, criterion_clm, DEVICE
                 )
                 current_lr = optimizer_pretrain.param_groups[0]["lr"]
+                val_perplexity = math.exp(avg_val_loss)
                 print(
                     f"--- End of Pre-train Epoch {epoch} | Train Loss: {avg_train_loss:.4f} | "
-                    f"Validation Loss: {avg_val_loss:.4f} | LR: {current_lr:.6f} ---"
+                    f"Val Loss: {avg_val_loss:.4f} | Val PPL: {val_perplexity:.2f} | LR: {current_lr:.6f} ---"
                 )
+
+                # Save epoch snapshot for temporal analysis (CKA during pretraining)
+                pretrain_snapshot_path = os.path.join(model_dir, f"pretrain_epoch_{epoch}.pth")
+                torch.save(pretrain_model.state_dict(), pretrain_snapshot_path)
+                print(f"Saved pretrain epoch snapshot to {pretrain_snapshot_path}")
 
                 scheduler_pretrain.step(avg_val_loss)
 

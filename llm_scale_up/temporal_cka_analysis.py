@@ -4,8 +4,14 @@ Temporal CKA Analysis Script
 Analyzes how representations change during fine-tuning using Centered Kernel Alignment (CKA).
 Loads epoch snapshots saved during training and computes:
 1. CKA between consecutive epochs (how much does each layer change?)
-2. CKA between pretrained and each finetuned epoch (what's preserved vs learned?)
-3. Layer-wise CKA heatmaps
+2. CKA between null model (pretrained) and each finetuned epoch (what's preserved vs learned?)
+3. CKA vs random initialization baseline (what's learned vs random weights)
+4. Layer-wise CKA heatmaps
+
+Terminology (per Mirco's guidance):
+- Null model = Pretrained only (no finetuning) - the baseline for comparison
+- Finetuned = Pretrained + finetuned on QA-SRL task
+- Random = Randomly initialized (additional baseline showing pretraining effect)
 
 Usage:
     python temporal_cka_analysis.py --model-dir /path/to/model/dir --config-name tiny
@@ -376,6 +382,26 @@ def compute_cka_vs_pretrained(activations_pretrained: Dict[str, np.ndarray],
     return {k: np.array(v) for k, v in results.items()}
 
 
+def compute_cka_vs_random(activations_random: Dict[str, np.ndarray],
+                          activations_target: Dict[str, np.ndarray]) -> Dict[str, float]:
+    """
+    Compute CKA between random (untrained) model and target model for each layer.
+
+    This shows how different the target representations are from random initialization.
+
+    Returns:
+        Dict mapping layer names to CKA scores vs random model
+    """
+    layer_names = list(activations_random.keys())
+    results = {}
+
+    for layer in layer_names:
+        cka = cka_linear_fast(activations_random[layer], activations_target[layer])
+        results[layer] = cka
+
+    return results
+
+
 def compute_layer_cka_matrix(activations: Dict[str, np.ndarray]) -> np.ndarray:
     """
     Compute CKA between all pairs of layers for a single model.
@@ -439,6 +465,42 @@ def plot_temporal_cka(cka_consecutive: Dict[str, np.ndarray],
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     print(f"Saved temporal CKA plot to {output_path}")
+    plt.close()
+
+
+def plot_random_baseline_comparison(cka_random_vs_pretrained: Optional[Dict[str, float]],
+                                     cka_random_vs_finetuned: Dict[int, Dict[str, float]],
+                                     epochs: List[int],
+                                     output_path: str):
+    """Plot CKA vs random (untrained) model baseline comparison."""
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    layer_names = sorted(list(cka_random_vs_finetuned[epochs[0]].keys()), key=lambda x: int(x.split("_")[1]))
+
+    # Plot CKA vs random for each epoch
+    for layer in layer_names:
+        cka_values = [cka_random_vs_finetuned[epoch][layer] for epoch in epochs]
+        ax.plot(epochs, cka_values, marker='o', label=layer, alpha=0.7)
+
+    # Add horizontal lines for pretrained vs random (if available)
+    if cka_random_vs_pretrained is not None:
+        colors = plt.cm.tab10.colors
+        for i, layer in enumerate(layer_names):
+            ax.axhline(y=cka_random_vs_pretrained[layer], color=colors[i % len(colors)],
+                      linestyle='--', alpha=0.5)
+        # Add legend note
+        ax.plot([], [], 'k--', alpha=0.5, label='Pretrained vs Random')
+
+    ax.set_xlabel("Finetuning Epoch")
+    ax.set_ylabel("CKA vs Random (Untrained) Model")
+    ax.set_title("Representation Divergence from Random Initialization")
+    ax.legend(loc='best', fontsize=8)
+    ax.set_ylim(0, 1.05)
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"Saved random baseline plot to {output_path}")
     plt.close()
 
 
@@ -529,6 +591,10 @@ def main(model_dir: str, config_name: str, max_epochs: Optional[int] = None,
     probe_dataset = ProbeDataset(tokenizer, max_seq_len=512, n_samples=n_probe_samples)
     probe_loader = DataLoader(probe_dataset, batch_size=32, shuffle=False, collate_fn=collate_probe)
 
+    # Extract activations for random (untrained) model baseline
+    print("Extracting random model activations (untrained baseline)...")
+    activations_random = extract_activations(model, probe_loader, device)
+
     # Find epoch snapshots
     epoch_files = []
     for f in os.listdir(model_dir):
@@ -588,13 +654,27 @@ def main(model_dir: str, config_name: str, max_epochs: Optional[int] = None,
         print("Computing CKA vs pretrained...")
         cka_vs_pretrained = compute_cka_vs_pretrained(activations_pretrained, activations_by_epoch)
 
+    # Compute CKA vs random (untrained) model baseline
+    print("Computing CKA vs random model...")
+    cka_random_vs_pretrained = None
+    if activations_pretrained is not None:
+        cka_random_vs_pretrained = compute_cka_vs_random(activations_random, activations_pretrained)
+
+    # CKA between random and each finetuned epoch
+    cka_random_vs_finetuned = {}
+    for epoch_num in epochs:
+        cka_random_vs_finetuned[epoch_num] = compute_cka_vs_random(activations_random, activations_by_epoch[epoch_num])
+
     # Save results
     results = {
         "epochs": epochs,
         "cka_consecutive": {k: v.tolist() for k, v in cka_consecutive.items()},
+        "cka_random_vs_finetuned": {str(epoch): cka_random_vs_finetuned[epoch] for epoch in epochs},
     }
     if cka_vs_pretrained is not None:
         results["cka_vs_pretrained"] = {k: v.tolist() for k, v in cka_vs_pretrained.items()}
+    if cka_random_vs_pretrained is not None:
+        results["cka_random_vs_pretrained"] = cka_random_vs_pretrained
 
     results_path = os.path.join(output_dir, "temporal_cka_results.json")
     with open(results_path, "w") as f:
@@ -625,6 +705,12 @@ def main(model_dir: str, config_name: str, max_epochs: Optional[int] = None,
             os.path.join(output_dir, f"layer_cka_epoch_{last_epoch}.png")
         )
 
+    # Plot random baseline comparison
+    plot_random_baseline_comparison(
+        cka_random_vs_pretrained, cka_random_vs_finetuned, epochs,
+        os.path.join(output_dir, "random_baseline_cka_plot.png")
+    )
+
     # Print summary
     print("\n" + "="*60)
     print("TEMPORAL CKA ANALYSIS SUMMARY")
@@ -636,11 +722,24 @@ def main(model_dir: str, config_name: str, max_epochs: Optional[int] = None,
         print(f"  {layer}: {mean_cka:.4f}")
 
     if cka_vs_pretrained is not None:
-        print("\nCKA vs pretrained at final epoch (higher = more preserved):")
+        print("\nCKA vs null model (pretrained) at final epoch (higher = more preserved):")
         final_epoch = epochs[-1]
         for layer in sorted(cka_vs_pretrained.keys(), key=lambda x: int(x.split("_")[1])):
             final_cka = cka_vs_pretrained[layer][-1]
             print(f"  {layer}: {final_cka:.4f}")
+
+    # Random baseline comparison
+    if cka_random_vs_pretrained is not None:
+        print("\nCKA: Random vs Pretrained (what pretraining learned from random init):")
+        for layer in sorted(cka_random_vs_pretrained.keys(), key=lambda x: int(x.split("_")[1])):
+            cka_val = cka_random_vs_pretrained[layer]
+            print(f"  {layer}: {cka_val:.4f}")
+
+    print("\nCKA: Random vs Final Finetuned (total change from random init):")
+    final_epoch = epochs[-1]
+    for layer in sorted(cka_random_vs_finetuned[final_epoch].keys(), key=lambda x: int(x.split("_")[1])):
+        cka_val = cka_random_vs_finetuned[final_epoch][layer]
+        print(f"  {layer}: {cka_val:.4f}")
 
     print("\n" + "="*60)
 
