@@ -1466,6 +1466,11 @@ def train(
                 f"| LR: {current_lr:.6f} | Elapsed: {get_elapsed_time_str()} ---"
             )
 
+            # Save epoch snapshot for temporal analysis (CKA, layer-wise probing)
+            epoch_snapshot_path = os.path.join(model_dir, f"finetune_epoch_{epoch_num}.pth")
+            torch.save(qa_model.state_dict(), epoch_snapshot_path)
+            print(f"Saved epoch snapshot to {epoch_snapshot_path}")
+
             if avg_val_loss < best_val_loss:
                 best_val_loss = avg_val_loss
                 best_val_f1 = val_f1

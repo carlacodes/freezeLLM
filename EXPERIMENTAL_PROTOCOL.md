@@ -94,7 +94,7 @@ If the linear probe works well, the semantic role information **emerged** during
 ```bash
 # Run for each model size with full finetuning
 modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name tiny
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name small
+modal run -d pretrain_wikitext_finetune_qasrl_modal.py --config-name small
 modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name base
 modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name medium
 ```
