@@ -257,7 +257,7 @@ def _train_impl(
         current_gpu = torch.cuda.get_device_name(0)
         if recommended_gpu == "A100" and "A100" not in current_gpu:
             print(f"\n{'!'*60}")
-            print(f"WARNING: Config '{config_name}' recommends A100 GPU for batch_size=48")
+            print(f"WARNING: Config '{config_name}' recommends A100 GPU for batch_size={CONFIGS[config_name]['training_params']['batch_size_pretrain']}")
             print(f"Current GPU: {current_gpu}")
             print(f"You may experience OOM errors. To use A100:")
             print(f"  1. Change @app.function decorator: gpu='A100'")
@@ -461,7 +461,7 @@ def _train_impl(
             end_positions=None,
         ):
             sequence_output = self.llm(
-                input_ids, attention_mask=attention_mask, is_causal=False
+                input_ids, attention_mask=attention_mask, is_causal=True
             )
             logits = self.qa_outputs(sequence_output)
             start_logits, end_logits = logits.split(1, dim=-1)
@@ -482,10 +482,17 @@ def _train_impl(
     class ToyLLMForPretraining(nn.Module):
         """Wrapper for the pre-training phase, includes the Language Model head."""
 
-        def __init__(self, base_model: ToyLLM):
+        def __init__(self, base_model: ToyLLM, tie_weights: bool = True):
             super().__init__()
             self.llm = base_model
-            self.lm_head = nn.Linear(self.llm.config.hidden_size, self.llm.vocab_size)
+            self.lm_head = nn.Linear(self.llm.config.hidden_size, self.llm.vocab_size, bias=False)
+
+            # Initialize LM head with same distribution as other weights
+            torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.02)
+
+            # Tie weights between token embeddings and LM head (GPT-2 style)
+            if tie_weights:
+                self.lm_head.weight = self.llm.token_embedding.weight
 
         def forward(self, input_ids, attention_mask=None, is_causal=False):
             sequence_output = self.llm(
@@ -1252,7 +1259,7 @@ def _train_impl(
                     total_train_loss += loss.item() * pretrain_grad_accum
 
                     if (batch_idx + 1) % pretrain_grad_accum == 0:
-                        torch.nn.utils.clip_grad_norm_(pretrain_model.parameters(), 0.5)
+                        torch.nn.utils.clip_grad_norm_(pretrain_model.parameters(), 1.0)
                         optimizer_pretrain.step()
                         optimizer_pretrain.zero_grad()
 
@@ -1418,12 +1425,16 @@ def _train_impl(
                 batch_size=train_params['batch_size_qa'],
                 shuffle=True,
                 collate_fn=collate_batch_qa,
+                num_workers=4,
+                pin_memory=True,
             )
             qa_val_dataloader = DataLoader(
                 combined_val_dataset,
                 batch_size=train_params['batch_size_qa'],
                 shuffle=False,
                 collate_fn=collate_batch_qa,
+                num_workers=4,
+                pin_memory=True,
             )
         else:
             qa_train_dataloader = DataLoader(
@@ -1431,12 +1442,16 @@ def _train_impl(
                 batch_size=train_params['batch_size_qa'],
                 shuffle=True,
                 collate_fn=collate_batch_qa,
+                num_workers=4,
+                pin_memory=True,
             )
             qa_val_dataloader = DataLoader(
                 qa_val_dataset,
                 batch_size=train_params['batch_size_qa'],
                 shuffle=False,
                 collate_fn=collate_batch_qa,
+                num_workers=4,
+                pin_memory=True,
             )
 
         optimizer_finetune = optim.AdamW(qa_model.parameters(), lr=train_params['finetune_lr'], weight_decay=0.01)
