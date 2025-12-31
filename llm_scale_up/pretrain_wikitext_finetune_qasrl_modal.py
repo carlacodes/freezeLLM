@@ -93,8 +93,7 @@ CONFIGS = {
             "finetune_warmup_steps": 200,
             "batch_size_qa": 64,
             "recommended_gpu": "A10G",
-            "use_additional_pretrain_data": True,
-            "use_squad_finetune": True
+            "use_squad_finetune": False  # Use only QA-SRL for clean emergence testing
         }
     },
     "small": {
@@ -120,8 +119,7 @@ CONFIGS = {
             "finetune_warmup_steps": 300,
             "batch_size_qa": 48,
             "recommended_gpu": "A10G",
-            "use_additional_pretrain_data": True,
-            "use_squad_finetune": True
+            "use_squad_finetune": False  # Use only QA-SRL for clean emergence testing
         }
     },
     "base": {
@@ -147,8 +145,7 @@ CONFIGS = {
             "finetune_warmup_steps": 500,
             "batch_size_qa": 32,
             "recommended_gpu": "A10G",
-            "use_additional_pretrain_data": True,
-            "use_squad_finetune": True
+            "use_squad_finetune": False  # Use only QA-SRL for clean emergence testing
         }
     },
     "medium": {
@@ -174,8 +171,7 @@ CONFIGS = {
             "finetune_warmup_steps": 1000,
             "batch_size_qa": 96,
             "recommended_gpu": "A100-80GB",  # Required for batch=96 without OOM
-            "use_additional_pretrain_data": True,
-            "use_squad_finetune": True
+            "use_squad_finetune": False  # Use only QA-SRL for clean emergence testing
         }
     }
 }
@@ -660,6 +656,11 @@ def _train_impl(
                             token_end_index = idx
 
                     if token_start_index != -1 and token_end_index != -1:
+                        # Create context mask: 1 for context positions, 0 for question/special tokens
+                        context_mask = torch.zeros(self.max_seq_len, dtype=torch.long)
+                        for idx in context_indices:
+                            context_mask[idx] = 1
+
                         processed.append(
                             {
                                 "input_ids": torch.tensor(
@@ -674,6 +675,7 @@ def _train_impl(
                                 "end_position": torch.tensor(
                                     token_end_index, dtype=torch.long
                                 ),
+                                "context_mask": context_mask,
                             }
                         )
                         break
@@ -706,8 +708,46 @@ def _train_impl(
 
             self.processed_data = self._preprocess()
 
+        def _find_answer_span(self, context: str, answer_text: str):
+            """
+            Find the character span of the answer in the context.
+
+            Strategy:
+            1. Try exact case match first
+            2. If no exact match, try case-insensitive match
+            3. If multiple matches exist, return None (skip ambiguous examples)
+
+            Returns:
+                (char_start, char_end) tuple or None if not found/ambiguous
+            """
+            # Try exact match first
+            exact_start = context.find(answer_text)
+            if exact_start != -1:
+                # Check for multiple exact matches
+                second_match = context.find(answer_text, exact_start + 1)
+                if second_match == -1:
+                    return exact_start, exact_start + len(answer_text)
+                # Multiple exact matches - skip this example
+                return None
+
+            # Try case-insensitive match
+            context_lower = context.lower()
+            answer_lower = answer_text.lower()
+            ci_start = context_lower.find(answer_lower)
+            if ci_start == -1:
+                return None
+
+            # Check for multiple case-insensitive matches
+            second_ci_match = context_lower.find(answer_lower, ci_start + 1)
+            if second_ci_match != -1:
+                # Multiple matches - skip ambiguous example
+                return None
+
+            return ci_start, ci_start + len(answer_text)
+
         def _preprocess(self):
             processed = []
+            skipped_ambiguous = 0
             for example in self.dataset:
                 context = example["sentence"]
                 # Join question tokens, filtering out placeholder tokens
@@ -718,10 +758,11 @@ def _train_impl(
                     continue
 
                 for answer_text in example["answers"]:
-                    char_start = context.lower().find(answer_text.lower())
-                    if char_start == -1:
+                    span = self._find_answer_span(context, answer_text)
+                    if span is None:
+                        skipped_ambiguous += 1
                         continue
-                    char_end = char_start + len(answer_text)
+                    char_start, char_end = span
 
                     encoding = self.tokenizer(
                         question,
@@ -754,6 +795,11 @@ def _train_impl(
                                 token_end_index = idx
 
                         if token_start_index != -1 and token_end_index != -1:
+                            # Create context mask: 1 for context positions, 0 for question/special tokens
+                            context_mask = torch.zeros(self.max_seq_len, dtype=torch.long)
+                            for idx in context_indices:
+                                context_mask[idx] = 1
+
                             processed.append(
                                 {
                                     "input_ids": torch.tensor(
@@ -768,11 +814,14 @@ def _train_impl(
                                     "end_position": torch.tensor(
                                         token_end_index, dtype=torch.long
                                     ),
+                                    "context_mask": context_mask,
                                 }
                             )
                             break
 
             print(f"Finished processing QA-SRL. Found {len(processed)} valid QA examples.")
+            if skipped_ambiguous > 0:
+                print(f"  Skipped {skipped_ambiguous} examples with ambiguous answer spans (multiple matches)")
             return processed
 
         def __len__(self):
@@ -830,7 +879,8 @@ def _train_impl(
         attention_mask = torch.stack([item["attention_mask"] for item in batch])
         start_positions = torch.stack([item["start_position"] for item in batch])
         end_positions = torch.stack([item["end_position"] for item in batch])
-        return input_ids, attention_mask, start_positions, end_positions
+        context_mask = torch.stack([item["context_mask"] for item in batch])
+        return input_ids, attention_mask, start_positions, end_positions, context_mask
 
     def validate_pretrain_epoch(model, dataloader, criterion, device):
         model.eval()
@@ -851,22 +901,32 @@ def _train_impl(
         return total_loss / num_batches if num_batches > 0 else 0
 
     def evaluate_qa_metrics(model, dataloader, device):
-        """Evaluates the model on a QA dataset using Exact Match and F1 score."""
+        """Evaluates the model on a QA dataset using Exact Match and F1 score.
+
+        Uses context_mask to ensure predictions are only made within the context
+        portion of the input, not in the question or special token positions.
+        """
         model.eval()
         all_pred_start, all_pred_end = [], []
         all_true_start, all_true_end = [], []
 
         with torch.no_grad():
-            for input_ids, attention_mask, start_pos, end_pos in dataloader:
+            for input_ids, attention_mask, start_pos, end_pos, context_mask in dataloader:
                 input_ids, attention_mask = input_ids.to(device), attention_mask.to(device)
                 start_pos, end_pos = start_pos.to(device), end_pos.to(device)
+                context_mask = context_mask.to(device)
 
                 _, start_logits, end_logits = model(
                     input_ids, attention_mask=attention_mask
                 )
 
-                all_pred_start.append(torch.argmax(start_logits, dim=1).cpu())
-                all_pred_end.append(torch.argmax(end_logits, dim=1).cpu())
+                # Mask out non-context positions before taking argmax
+                # Set logits to -inf for question/special token positions
+                masked_start_logits = start_logits.masked_fill(context_mask == 0, float('-inf'))
+                masked_end_logits = end_logits.masked_fill(context_mask == 0, float('-inf'))
+
+                all_pred_start.append(torch.argmax(masked_start_logits, dim=1).cpu())
+                all_pred_end.append(torch.argmax(masked_end_logits, dim=1).cpu())
                 all_true_start.append(start_pos.cpu())
                 all_true_end.append(end_pos.cpu())
 
@@ -912,7 +972,7 @@ def _train_impl(
         total_loss = 0
         optimizer.zero_grad()
 
-        for batch_idx, (input_ids, attention_mask, start_pos, end_pos) in enumerate(dataloader):
+        for batch_idx, (input_ids, attention_mask, start_pos, end_pos, _context_mask) in enumerate(dataloader):
             input_ids, attention_mask, start_pos, end_pos = (
                 input_ids.to(device),
                 attention_mask.to(device),
@@ -950,7 +1010,7 @@ def _train_impl(
         model.eval()
         total_loss = 0
         with torch.no_grad():
-            for input_ids, attention_mask, start_pos, end_pos in dataloader:
+            for input_ids, attention_mask, start_pos, end_pos, _context_mask in dataloader:
                 input_ids, attention_mask, start_pos, end_pos = (
                     input_ids.to(device),
                     attention_mask.to(device),

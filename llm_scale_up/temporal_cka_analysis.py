@@ -162,11 +162,11 @@ class ToyLLMForQuestionAnswering(nn.Module):
     def forward(self, input_ids, attention_mask=None, output_hidden_states=False):
         if output_hidden_states:
             sequence_output, hidden_states = self.llm(
-                input_ids, attention_mask=attention_mask, is_causal=False, output_hidden_states=True
+                input_ids, attention_mask=attention_mask, is_causal=True, output_hidden_states=True
             )
             return sequence_output, hidden_states
         else:
-            sequence_output = self.llm(input_ids, attention_mask=attention_mask, is_causal=False)
+            sequence_output = self.llm(input_ids, attention_mask=attention_mask, is_causal=True)
             return sequence_output
 
 
