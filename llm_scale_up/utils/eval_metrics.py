@@ -4,15 +4,19 @@ import torch
 def evaluate_qa_metrics(model, dataloader, device):
     """
     Evaluates the model on a QA dataset using Exact Match and standard token-level F1 score.
+
+    Uses context_mask to ensure predictions are only made within the context
+    portion of the input, not in the question or special token positions.
     """
     model.eval()
     all_pred_start, all_pred_end = [], []
     all_true_start, all_true_end = [], []
 
     with torch.no_grad():
-        for input_ids, attention_mask, start_pos, end_pos in dataloader:
+        for input_ids, attention_mask, start_pos, end_pos, context_mask in dataloader:
             input_ids, attention_mask = input_ids.to(device), attention_mask.to(device)
             start_pos, end_pos = start_pos.to(device), end_pos.to(device)
+            context_mask = context_mask.to(device)
 
             # The model forward pass returns (loss, start_logits, end_logits)
             # We don't need the loss during evaluation.
@@ -20,8 +24,13 @@ def evaluate_qa_metrics(model, dataloader, device):
                 input_ids, attention_mask=attention_mask
             )
 
-            all_pred_start.append(torch.argmax(start_logits, dim=1).cpu())
-            all_pred_end.append(torch.argmax(end_logits, dim=1).cpu())
+            # Mask out non-context positions before taking argmax
+            # Set logits to -inf for question/special token positions
+            masked_start_logits = start_logits.masked_fill(context_mask == 0, float('-inf'))
+            masked_end_logits = end_logits.masked_fill(context_mask == 0, float('-inf'))
+
+            all_pred_start.append(torch.argmax(masked_start_logits, dim=1).cpu())
+            all_pred_end.append(torch.argmax(masked_end_logits, dim=1).cpu())
             all_true_start.append(start_pos.cpu())
             all_true_end.append(end_pos.cpu())
 

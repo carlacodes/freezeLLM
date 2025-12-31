@@ -187,6 +187,7 @@ def _train_impl(
     freeze_llm: bool = False,
     finetune_samples: int = None,
     pretrain_data: str = "wiki",
+    random_baseline: bool = False,
     _continuation_count: int = 0,
 ):
     """
@@ -201,6 +202,7 @@ def _train_impl(
         freeze_llm: Freeze LLM weights during finetuning (linear probe mode)
         finetune_samples: Limit finetuning to N samples (for few-shot experiments)
         pretrain_data: Pretraining data to use ('wiki' or 'wiki+nq')
+        random_baseline: Use randomly initialized LLM (no pretrained weights) as baseline
     """
     import json
     import math
@@ -448,6 +450,10 @@ def _train_impl(
             super().__init__()
             self.llm = base_model
             self.qa_outputs = nn.Linear(self.llm.config.hidden_size, 2)
+
+            # Initialize QA head with same distribution as LLM layers for consistency
+            torch.nn.init.normal_(self.qa_outputs.weight, mean=0.0, std=0.02)
+            torch.nn.init.zeros_(self.qa_outputs.bias)
 
         def forward(
             self,
@@ -747,7 +753,18 @@ def _train_impl(
 
         def _preprocess(self):
             processed = []
-            skipped_ambiguous = 0
+            # Detailed filtering statistics for paper reporting
+            stats = {
+                "total_raw_examples": len(self.dataset),
+                "total_answer_instances": 0,
+                "skipped_no_answers": 0,
+                "skipped_ambiguous_span": 0,  # Multiple matches in context
+                "skipped_answer_not_found": 0,  # Answer text not in context
+                "skipped_no_context_tokens": 0,  # Tokenization produced no context
+                "skipped_span_alignment_failed": 0,  # Could not align char span to tokens
+                "valid_examples": 0,
+            }
+
             for example in self.dataset:
                 context = example["sentence"]
                 # Join question tokens, filtering out placeholder tokens
@@ -755,12 +772,20 @@ def _train_impl(
                     [token for token in example["question"] if token != "_"]
                 )
                 if not example.get("answers"):
+                    stats["skipped_no_answers"] += 1
                     continue
 
                 for answer_text in example["answers"]:
+                    stats["total_answer_instances"] += 1
                     span = self._find_answer_span(context, answer_text)
                     if span is None:
-                        skipped_ambiguous += 1
+                        # Distinguish between "not found" and "ambiguous"
+                        context_lower = context.lower()
+                        answer_lower = answer_text.lower()
+                        if context_lower.find(answer_lower) == -1:
+                            stats["skipped_answer_not_found"] += 1
+                        else:
+                            stats["skipped_ambiguous_span"] += 1
                         continue
                     char_start, char_end = span
 
@@ -775,6 +800,7 @@ def _train_impl(
                         padding="max_length",
                     )
 
+                    example_added = False
                     for i in range(len(encoding["input_ids"])):
                         sequence_ids = encoding.sequence_ids(i)
                         context_indices = [
@@ -817,11 +843,38 @@ def _train_impl(
                                     "context_mask": context_mask,
                                 }
                             )
+                            example_added = True
                             break
 
-            print(f"Finished processing QA-SRL. Found {len(processed)} valid QA examples.")
-            if skipped_ambiguous > 0:
-                print(f"  Skipped {skipped_ambiguous} examples with ambiguous answer spans (multiple matches)")
+                    if not example_added:
+                        # Check why it failed
+                        sequence_ids = encoding.sequence_ids(0) if encoding["input_ids"] else []
+                        context_indices = [idx for idx, sid in enumerate(sequence_ids) if sid == 1]
+                        if not context_indices:
+                            stats["skipped_no_context_tokens"] += 1
+                        else:
+                            stats["skipped_span_alignment_failed"] += 1
+
+            stats["valid_examples"] = len(processed)
+            self.filtering_stats = stats  # Store for later access
+
+            # Print detailed statistics
+            print(f"\nQA-SRL Dataset Filtering Statistics:")
+            print(f"  Raw examples in dataset: {stats['total_raw_examples']}")
+            print(f"  Total answer instances: {stats['total_answer_instances']}")
+            print(f"  Skipped (no answers): {stats['skipped_no_answers']}")
+            print(f"  Skipped (answer not in context): {stats['skipped_answer_not_found']}")
+            print(f"  Skipped (ambiguous - multiple matches): {stats['skipped_ambiguous_span']}")
+            print(f"  Skipped (no context tokens after tokenization): {stats['skipped_no_context_tokens']}")
+            print(f"  Skipped (span alignment failed): {stats['skipped_span_alignment_failed']}")
+            print(f"  Valid examples: {stats['valid_examples']}")
+            total_skipped = (stats['skipped_no_answers'] + stats['skipped_answer_not_found'] +
+                           stats['skipped_ambiguous_span'] + stats['skipped_no_context_tokens'] +
+                           stats['skipped_span_alignment_failed'])
+            if stats['total_answer_instances'] > 0:
+                skip_rate = 100 * total_skipped / stats['total_answer_instances']
+                print(f"  Skip rate: {skip_rate:.1f}%\n")
+
             return processed
 
         def __len__(self):
@@ -1123,17 +1176,18 @@ def _train_impl(
         matching_dirs.sort(key=lambda x: x[1], reverse=True)
         return matching_dirs[0][0], matching_dirs[0][2]  # (checkpoint_path, dirname)
 
-    # Add _frozen suffix to distinguish frozen probe runs from full finetuning
+    # Add suffixes to distinguish experimental conditions
     frozen_suffix = "_frozen" if freeze_llm else ""
+    random_suffix = "_random" if random_baseline else ""
 
     if resume_path:
         model_dir = os.path.dirname(os.path.join("/models", resume_path))
     else:
         # Check for existing checkpoint to auto-resume from
-        model_prefix = f"{model_config.name}{samples_suffix}{frozen_suffix}"
+        model_prefix = f"{model_config.name}{samples_suffix}{frozen_suffix}{random_suffix}"
         latest = find_latest_checkpoint(model_prefix)
 
-        if latest:
+        if latest and not random_baseline:  # Don't auto-resume for random baseline runs
             checkpoint_path, dirname = latest
             print(f"\n{'='*60}")
             print(f"AUTO-RESUME: Found existing checkpoint!")
@@ -1144,7 +1198,7 @@ def _train_impl(
             model_dir = os.path.join("/models", dirname)
         else:
             date_now = time.strftime("%Y%m%d-%H%M%S")
-            model_dir = f"/models/{model_config.name}{samples_suffix}{frozen_suffix}_{date_now}"
+            model_dir = f"/models/{model_config.name}{samples_suffix}{frozen_suffix}{random_suffix}_{date_now}"
 
     PRETRAINED_MODEL_PATH = os.path.join(model_dir, "toy_llm_unified_pretrained.pth")
     FINETUNED_MODEL_PATH = os.path.join(model_dir, "toy_llm_qasrl_finetuned.pth")
@@ -1429,18 +1483,23 @@ def _train_impl(
 
         qa_model = ToyLLMForQuestionAnswering(base_llm).to(DEVICE)
 
-        try:
-            pretrained_dict = torch.load(PRETRAINED_MODEL_PATH, map_location=DEVICE)
-            qa_model.llm.load_state_dict(
-                {
-                    k.replace("llm.", ""): v
-                    for k, v in pretrained_dict.items()
-                    if k.startswith("llm.")
-                }
-            )
-            print("Successfully loaded pre-trained weights into the QA model.")
-        except FileNotFoundError:
-            print(f"WARNING: Pre-trained model not found. Fine-tuning from random init.")
+        # Random baseline: skip loading pretrained weights to establish floor performance
+        if random_baseline:
+            print("\n*** RANDOM BASELINE: Using randomly initialized LLM (no pretrained weights) ***")
+            print("This establishes a floor for the emergence gap metric.")
+        else:
+            try:
+                pretrained_dict = torch.load(PRETRAINED_MODEL_PATH, map_location=DEVICE)
+                qa_model.llm.load_state_dict(
+                    {
+                        k.replace("llm.", ""): v
+                        for k, v in pretrained_dict.items()
+                        if k.startswith("llm.")
+                    }
+                )
+                print("Successfully loaded pre-trained weights into the QA model.")
+            except FileNotFoundError:
+                print(f"WARNING: Pre-trained model not found. Fine-tuning from random init.")
 
         # Freeze LLM if requested (linear probe mode)
         if freeze_llm:
@@ -1635,14 +1694,32 @@ def _train_impl(
         final_val_acc, final_val_f1 = evaluate_qa_metrics(qa_model, qa_val_dataloader, DEVICE)
         print(f"Final Validation Accuracy: {final_val_acc:.4f} | Final F1: {final_val_f1:.4f}")
 
-        # Save stats
+        # Save stats including QA-SRL filtering statistics for paper reporting
         stats = {
             "config_name": config_name,
             "finetune_epochs": epoch_num,
             "best_validation_loss": best_val_loss,
             "final_validation_accuracy": final_val_acc,
             "final_validation_f1": final_val_f1,
+            "freeze_llm": freeze_llm,
+            "random_baseline": random_baseline,
+            "finetune_samples_limit": finetune_samples,
         }
+
+        # Include QA-SRL filtering statistics if available
+        # Handle both direct QASRLDataset and Subset wrapper cases
+        train_dataset_for_stats = qa_train_dataset
+        if hasattr(qa_train_dataset, 'dataset'):  # It's a Subset
+            train_dataset_for_stats = qa_train_dataset.dataset
+        if hasattr(train_dataset_for_stats, 'filtering_stats'):
+            stats["qasrl_train_filtering"] = train_dataset_for_stats.filtering_stats
+
+        val_dataset_for_stats = qa_val_dataset
+        if hasattr(qa_val_dataset, 'dataset'):  # It's a Subset
+            val_dataset_for_stats = qa_val_dataset.dataset
+        if hasattr(val_dataset_for_stats, 'filtering_stats'):
+            stats["qasrl_val_filtering"] = val_dataset_for_stats.filtering_stats
+
         stats_path = os.path.join(model_dir, "finetune_stats.json")
         with open(stats_path, "w") as f:
             json.dump(stats, f, indent=2)
@@ -1674,6 +1751,7 @@ def train_a10g(
     freeze_llm: bool = False,
     finetune_samples: int = None,
     pretrain_data: str = "wiki",
+    random_baseline: bool = False,
     _continuation_count: int = 0,
 ):
     """Training function using A10G GPU (for tiny, small, base configs)."""
@@ -1686,6 +1764,7 @@ def train_a10g(
         freeze_llm=freeze_llm,
         finetune_samples=finetune_samples,
         pretrain_data=pretrain_data,
+        random_baseline=random_baseline,
         _continuation_count=_continuation_count,
     )
 
@@ -1705,6 +1784,7 @@ def train_a100(
     freeze_llm: bool = False,
     finetune_samples: int = None,
     pretrain_data: str = "wiki",
+    random_baseline: bool = False,
     _continuation_count: int = 0,
 ):
     """Training function using A100 GPU (for medium config)."""
@@ -1717,6 +1797,7 @@ def train_a100(
         freeze_llm=freeze_llm,
         finetune_samples=finetune_samples,
         pretrain_data=pretrain_data,
+        random_baseline=random_baseline,
         _continuation_count=_continuation_count,
     )
 
@@ -1782,6 +1863,7 @@ def main(
     freeze_llm: bool = False,
     finetune_samples: int = None,
     pretrain_data: str = "wiki",
+    random_baseline: bool = False,
 ):
     """
     Main entry point for running training on Modal.
@@ -1797,6 +1879,7 @@ def main(
         freeze_llm: Freeze LLM weights during finetuning (linear probe mode)
         finetune_samples: Limit finetuning to N samples (for few-shot experiments)
         pretrain_data: Pretraining data ('wiki' or 'wiki+nq'). Default 'wiki' for clean emergence testing.
+        random_baseline: Use randomly initialized LLM (no pretraining) to establish floor for emergence gap.
     """
     if list_saved:
         models = list_models.remote()
@@ -1819,6 +1902,7 @@ def main(
     print(f"Skip pretrain: {skip_pretrain}")
     print(f"Skip finetune: {skip_finetune}")
     print(f"Freeze LLM: {freeze_llm}")
+    print(f"Random baseline: {random_baseline}")
     if finetune_samples:
         print(f"Finetune samples: {finetune_samples}")
     if resume:
@@ -1835,6 +1919,7 @@ def main(
         freeze_llm=freeze_llm,
         finetune_samples=finetune_samples,
         pretrain_data=pretrain_data,
+        random_baseline=random_baseline,
     )
 
     print(f"\n{'='*60}")

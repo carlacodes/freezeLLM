@@ -1,11 +1,55 @@
 """
 Diagnostic script to verify QA-SRL data preprocessing alignment.
 Checks that token positions correctly map back to the expected answer text.
+
+Uses the same answer span detection logic as the main training script
+to ensure consistency.
 """
 
 import torch
 from datasets import load_dataset
 from transformers import AutoTokenizer
+
+
+def find_answer_span(context: str, answer_text: str):
+    """
+    Find the character span of the answer in the context.
+
+    This function mirrors the logic in QASRLDataset._find_answer_span
+    from pretrain_wikitext_finetune_qasrl_modal.py to ensure consistency.
+
+    Strategy:
+    1. Try exact case match first
+    2. If no exact match, try case-insensitive match
+    3. If multiple matches exist, return None (skip ambiguous examples)
+
+    Returns:
+        (char_start, char_end) tuple or None if not found/ambiguous
+    """
+    # Try exact match first
+    exact_start = context.find(answer_text)
+    if exact_start != -1:
+        # Check for multiple exact matches
+        second_match = context.find(answer_text, exact_start + 1)
+        if second_match == -1:
+            return exact_start, exact_start + len(answer_text)
+        # Multiple exact matches - skip this example
+        return None
+
+    # Try case-insensitive match
+    context_lower = context.lower()
+    answer_lower = answer_text.lower()
+    ci_start = context_lower.find(answer_lower)
+    if ci_start == -1:
+        return None
+
+    # Check for multiple case-insensitive matches
+    second_ci_match = context_lower.find(answer_lower, ci_start + 1)
+    if second_ci_match != -1:
+        # Multiple matches - skip ambiguous example
+        return None
+
+    return ci_start, ci_start + len(answer_text)
 
 
 def verify_alignment(num_samples=10):
@@ -21,6 +65,7 @@ def verify_alignment(num_samples=10):
 
     misalignments = 0
     total_checked = 0
+    skipped_ambiguous = 0
 
     for idx, example in enumerate(dataset):
         if total_checked >= num_samples:
@@ -33,11 +78,12 @@ def verify_alignment(num_samples=10):
             continue
 
         for answer_text in example["answers"]:
-            # This is how the preprocessing finds the answer
-            char_start = context.lower().find(answer_text.lower())
-            if char_start == -1:
+            # Use the same logic as the main preprocessing
+            span = find_answer_span(context, answer_text)
+            if span is None:
+                skipped_ambiguous += 1
                 continue
-            char_end = char_start + len(answer_text)
+            char_start, char_end = span
 
             encoding = tokenizer(
                 question,
@@ -111,8 +157,14 @@ def verify_alignment(num_samples=10):
     print(f"SUMMARY")
     print(f"{'='*60}")
     print(f"Total examples checked: {total_checked}")
+    print(f"Skipped (ambiguous spans): {skipped_ambiguous}")
     print(f"Misalignments found: {misalignments}")
-    print(f"Alignment rate: {100 * (total_checked - misalignments) / total_checked:.1f}%")
+    if total_checked > 0:
+        print(f"Alignment rate: {100 * (total_checked - misalignments) / total_checked:.1f}%")
+
+    if skipped_ambiguous > 0:
+        print(f"\nNote: {skipped_ambiguous} examples skipped due to ambiguous answer spans")
+        print(f"(multiple matches in context - same behavior as training preprocessing)")
 
     if misalignments > 0:
         print(f"\nWARNING: Found {misalignments} misalignments!")
