@@ -57,6 +57,145 @@ modal run pretrain_wikitext_finetune_qasrl_modal.py --list-saved
 
 ---
 
+## Post-Training Analysis Steps
+
+After running `modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name <size>`, follow these steps to collect results and run analyses.
+
+### Step 1: Verify Training Completed Successfully
+
+```bash
+# List all saved models and check for your experiment
+modal run pretrain_wikitext_finetune_qasrl_modal.py --list-saved
+```
+
+Look for directories like:
+- `TinyQA_spe200k_20251230-120000/` (full finetuning)
+- `TinyQA_spe200k_frozen_20251230-130000/` (frozen/linear probe)
+- `TinyQA_spe200k_random_20251230-140000/` (random baseline)
+
+Each directory should contain:
+- `toy_llm_unified_pretrained.pth` - Pretrained model weights
+- `toy_llm_qasrl_finetuned.pth` - Best finetuned model weights
+- `finetune_stats.json` - Final metrics and filtering statistics
+- `finetune_epoch_*.pth` - Epoch snapshots for CKA analysis
+- `pretrain_epoch_*.pth` - Pretraining snapshots (if applicable)
+
+### Step 2: Collect Results from finetune_stats.json
+
+Download and inspect the results:
+
+```bash
+# Download stats file for a specific model
+modal volume get llm-models <ModelDir>/finetune_stats.json ./results/
+
+# Example for tiny model
+modal volume get llm-models TinyQA_spe200k_20251230-120000/finetune_stats.json ./results/tiny_full.json
+modal volume get llm-models TinyQA_spe200k_frozen_20251230-130000/finetune_stats.json ./results/tiny_frozen.json
+```
+
+The `finetune_stats.json` contains:
+```json
+{
+  "config_name": "tiny",
+  "finetune_epochs": 15,
+  "best_validation_loss": 2.34,
+  "final_validation_accuracy": 0.42,
+  "final_validation_f1": 0.51,
+  "freeze_llm": false,
+  "random_baseline": false,
+  "finetune_samples_limit": null,
+  "qasrl_train_filtering": {
+    "total_raw_examples": 6414,
+    "valid_examples": 5823,
+    "skipped_ambiguous_span": 312
+  }
+}
+```
+
+### Step 3: Run Random Baseline (Required for Emergence Score)
+
+The random baseline establishes the performance floor:
+
+```bash
+# Run random baseline for each model size
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name tiny --random-baseline
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name small --random-baseline
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name base --random-baseline
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name medium --random-baseline
+```
+
+### Step 4: Compute Emergence Metrics
+
+Using results from Steps 2-3, calculate:
+
+```python
+# Normalized Emergence Score (from paper Section 3.4)
+def compute_emergence_score(f1_frozen, f1_full, f1_random):
+    """
+    Returns value between 0 and 1.
+    - Near 1.0: Strong emergence (frozen captures most capability)
+    - Near 0.0: No emergence (frozen no better than random)
+    """
+    return (f1_frozen - f1_random) / (f1_full - f1_random)
+
+# Raw Emergence Gap
+def compute_emergence_gap(f1_full, f1_frozen):
+    """Smaller gap = more emergence."""
+    return f1_full - f1_frozen
+```
+
+### Step 5: Run Temporal CKA Analysis
+
+Analyze how representations change during finetuning:
+
+```bash
+# Run CKA analysis for a trained model
+modal run temporal_cka_analysis.py --model-dir TinyQA_spe200k_20251230-120000 --config-name tiny
+
+# Compare frozen vs full finetuning
+modal run temporal_cka_analysis.py --model-dir TinyQA_spe200k_frozen_20251230-130000 --config-name tiny
+```
+
+This generates:
+- Layer-wise CKA heatmaps (how each layer changes during training)
+- Null model comparison (drift from pretrained baseline)
+- Random baseline comparison (structure vs random weights)
+
+### Step 6: Verify QA-SRL Data Alignment (Optional)
+
+Run the verification script to confirm answer span alignment:
+
+```bash
+python verify_qasrl_alignment.py
+```
+
+This validates that token positions correctly map to expected answer text.
+
+### Step 7: Compile Results Table
+
+Create a results table for all experiments:
+
+| Model | Pretrain | Mode | F1 | EM | Emergence Score |
+|-------|----------|------|-----|-----|-----------------|
+| tiny | wiki | full | X.XX | X.XX | - |
+| tiny | wiki | frozen | X.XX | X.XX | X.XX |
+| tiny | wiki | random | X.XX | X.XX | - |
+| small | wiki | full | X.XX | X.XX | - |
+| small | wiki | frozen | X.XX | X.XX | X.XX |
+| ... | ... | ... | ... | ... | ... |
+
+### Step 8: Generate Paper Figures
+
+```bash
+# Download all epoch snapshots for learning curve plots
+modal volume get llm-models TinyQA_spe200k_20251230-120000/ ./checkpoints/tiny_full/
+
+# Plot training curves, CKA heatmaps, emergence vs scale
+python scripts/generate_figures.py --results-dir ./results/
+```
+
+---
+
 ## Research Question
 
 **Can LLMs develop the ability to answer "who-did-what-to-whom" questions (semantic role understanding) from pretraining on semantically rich text alone, without explicit QA training?**
@@ -276,6 +415,7 @@ modal run pretrain_wikitext_finetune_qasrl_modal.py --list-saved
 | `--config-name` | tiny, small, base, medium | tiny | Model size configuration |
 | `--pretrain-data` | wiki, wiki+nq | wiki | Pretraining data. Use `wiki` for clean emergence testing |
 | `--freeze-llm` | (flag) | False | Freeze LLM weights, train only QA head (linear probe) |
+| `--random-baseline` | (flag) | False | Skip pretrained weights (random init) for emergence floor |
 | `--finetune-samples` | integer | all | Limit finetuning samples for few-shot experiments |
 | `--skip-pretrain` | (flag) | False | Skip pretraining, use existing model |
 | `--skip-finetune` | (flag) | False | Skip finetuning phase |
