@@ -461,6 +461,7 @@ def _train_impl(
             attention_mask=None,
             start_positions=None,
             end_positions=None,
+            context_mask=None,
         ):
             sequence_output = self.llm(
                 input_ids, attention_mask=attention_mask, is_causal=True
@@ -472,11 +473,20 @@ def _train_impl(
 
             total_loss = None
             if start_positions is not None and end_positions is not None:
+                # Apply context mask to ensure loss only considers valid answer positions
+                # This matches evaluation behavior where predictions are restricted to context
+                if context_mask is not None:
+                    start_logits_for_loss = start_logits.masked_fill(context_mask == 0, float('-inf'))
+                    end_logits_for_loss = end_logits.masked_fill(context_mask == 0, float('-inf'))
+                else:
+                    start_logits_for_loss = start_logits
+                    end_logits_for_loss = end_logits
+
                 loss_fct = nn.CrossEntropyLoss()
                 start_positions = start_positions.clamp(0, input_ids.size(1) - 1)
                 end_positions = end_positions.clamp(0, input_ids.size(1) - 1)
-                start_loss = loss_fct(start_logits, start_positions)
-                end_loss = loss_fct(end_logits, end_positions)
+                start_loss = loss_fct(start_logits_for_loss, start_positions)
+                end_loss = loss_fct(end_logits_for_loss, end_positions)
                 total_loss = (start_loss + end_loss) / 2
 
             return total_loss, start_logits, end_logits
@@ -1025,18 +1035,20 @@ def _train_impl(
         total_loss = 0
         optimizer.zero_grad()
 
-        for batch_idx, (input_ids, attention_mask, start_pos, end_pos, _context_mask) in enumerate(dataloader):
-            input_ids, attention_mask, start_pos, end_pos = (
+        for batch_idx, (input_ids, attention_mask, start_pos, end_pos, context_mask) in enumerate(dataloader):
+            input_ids, attention_mask, start_pos, end_pos, context_mask = (
                 input_ids.to(device),
                 attention_mask.to(device),
                 start_pos.to(device),
                 end_pos.to(device),
+                context_mask.to(device),
             )
             loss, _, _ = model(
                 input_ids,
                 attention_mask=attention_mask,
                 start_positions=start_pos,
                 end_positions=end_pos,
+                context_mask=context_mask,
             )
             if loss is None:
                 continue
@@ -1063,18 +1075,20 @@ def _train_impl(
         model.eval()
         total_loss = 0
         with torch.no_grad():
-            for input_ids, attention_mask, start_pos, end_pos, _context_mask in dataloader:
-                input_ids, attention_mask, start_pos, end_pos = (
+            for input_ids, attention_mask, start_pos, end_pos, context_mask in dataloader:
+                input_ids, attention_mask, start_pos, end_pos, context_mask = (
                     input_ids.to(device),
                     attention_mask.to(device),
                     start_pos.to(device),
                     end_pos.to(device),
+                    context_mask.to(device),
                 )
                 loss, _, _ = model(
                     input_ids,
                     attention_mask=attention_mask,
                     start_positions=start_pos,
                     end_positions=end_pos,
+                    context_mask=context_mask,
                 )
                 if loss is not None:
                     total_loss += loss.item()
