@@ -188,6 +188,7 @@ def _train_impl(
     finetune_samples: int = None,
     pretrain_data: str = "wiki",
     random_baseline: bool = False,
+    pretrained_model_path: str = None,
     _continuation_count: int = 0,
     train_fn=None,  # Modal function reference for spawning continuations
 ):
@@ -204,6 +205,9 @@ def _train_impl(
         finetune_samples: Limit finetuning to N samples (for few-shot experiments)
         pretrain_data: Pretraining data to use ('wiki' or 'wiki+nq')
         random_baseline: Use randomly initialized LLM (no pretrained weights) as baseline
+        pretrained_model_path: Path to pretrained model for finetuning (relative to /models).
+            Use this to run frozen/baseline experiments on a model pretrained in a different run.
+            Example: 'TinyQA_spe200k_20241201-120000/toy_llm_unified_pretrained.pth'
     """
     import json
     import math
@@ -1503,8 +1507,17 @@ def _train_impl(
             print("\n*** RANDOM BASELINE: Using randomly initialized LLM (no pretrained weights) ***")
             print("This establishes a floor for the emergence gap metric.")
         else:
+            # Determine which pretrained model to load
+            if pretrained_model_path:
+                # Use externally specified pretrained model (for frozen/baseline experiments)
+                load_path = os.path.join("/models", pretrained_model_path)
+                print(f"\n*** Using external pretrained model: {pretrained_model_path} ***")
+            else:
+                # Use pretrained model from current run's directory
+                load_path = PRETRAINED_MODEL_PATH
+
             try:
-                pretrained_dict = torch.load(PRETRAINED_MODEL_PATH, map_location=DEVICE)
+                pretrained_dict = torch.load(load_path, map_location=DEVICE)
                 qa_model.llm.load_state_dict(
                     {
                         k.replace("llm.", ""): v
@@ -1512,9 +1525,12 @@ def _train_impl(
                         if k.startswith("llm.")
                     }
                 )
-                print("Successfully loaded pre-trained weights into the QA model.")
+                print(f"Successfully loaded pre-trained weights from: {load_path}")
             except FileNotFoundError:
-                print(f"WARNING: Pre-trained model not found. Fine-tuning from random init.")
+                print(f"ERROR: Pre-trained model not found at {load_path}")
+                if pretrained_model_path:
+                    raise FileNotFoundError(f"Specified pretrained model not found: {load_path}")
+                print("WARNING: Fine-tuning from random init.")
 
         # Freeze LLM if requested (linear probe mode)
         if freeze_llm:
@@ -1767,6 +1783,7 @@ def train_a10g(
     finetune_samples: int = None,
     pretrain_data: str = "wiki",
     random_baseline: bool = False,
+    pretrained_model_path: str = None,
     _continuation_count: int = 0,
 ):
     """Training function using A10G GPU (for tiny, small, base configs)."""
@@ -1780,6 +1797,7 @@ def train_a10g(
         finetune_samples=finetune_samples,
         pretrain_data=pretrain_data,
         random_baseline=random_baseline,
+        pretrained_model_path=pretrained_model_path,
         _continuation_count=_continuation_count,
         train_fn=train_a10g,  # Pass self for spawning continuations
     )
@@ -1801,6 +1819,7 @@ def train_a100(
     finetune_samples: int = None,
     pretrain_data: str = "wiki",
     random_baseline: bool = False,
+    pretrained_model_path: str = None,
     _continuation_count: int = 0,
 ):
     """Training function using A100 GPU (for medium config)."""
@@ -1814,6 +1833,7 @@ def train_a100(
         finetune_samples=finetune_samples,
         pretrain_data=pretrain_data,
         random_baseline=random_baseline,
+        pretrained_model_path=pretrained_model_path,
         _continuation_count=_continuation_count,
         train_fn=train_a100,  # Pass self for spawning continuations
     )
@@ -1881,6 +1901,7 @@ def main(
     finetune_samples: int = None,
     pretrain_data: str = "wiki",
     random_baseline: bool = False,
+    pretrained_model_path: str = None,
 ):
     """
     Main entry point for running training on Modal.
@@ -1897,6 +1918,9 @@ def main(
         finetune_samples: Limit finetuning to N samples (for few-shot experiments)
         pretrain_data: Pretraining data ('wiki' or 'wiki+nq'). Default 'wiki' for clean emergence testing.
         random_baseline: Use randomly initialized LLM (no pretraining) to establish floor for emergence gap.
+        pretrained_model_path: Path to pretrained model for finetuning (relative to /models volume).
+            Use this with --freeze-llm or --skip-pretrain to run experiments on an existing pretrained model.
+            Example: 'TinyQA_spe200k_20241201-120000/toy_llm_unified_pretrained.pth'
     """
     if list_saved:
         models = list_models.remote()
@@ -1920,6 +1944,8 @@ def main(
     print(f"Skip finetune: {skip_finetune}")
     print(f"Freeze LLM: {freeze_llm}")
     print(f"Random baseline: {random_baseline}")
+    if pretrained_model_path:
+        print(f"Pretrained model: {pretrained_model_path}")
     if finetune_samples:
         print(f"Finetune samples: {finetune_samples}")
     if resume:
@@ -1937,6 +1963,7 @@ def main(
         finetune_samples=finetune_samples,
         pretrain_data=pretrain_data,
         random_baseline=random_baseline,
+        pretrained_model_path=pretrained_model_path,
     )
 
     print(f"\n{'='*60}")

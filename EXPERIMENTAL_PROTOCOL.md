@@ -19,34 +19,41 @@ cd llm_scale_up
 
 ### Minimum Viable Experiment (Start Here)
 
-Run these 4 commands to test emergence on the `tiny` model:
+Run these commands to test emergence on the `tiny` model:
 
 ```bash
-# 1. Baseline: Can tiny model learn the task at all?
+# 1. Baseline: Can tiny model learn the task at all? (runs pretrain + finetune)
 modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name tiny
+# Note the output folder, e.g. TinyQA_spe200k_20251231-005835/
 
-# 2. Linear probe: Does emergence occur?
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name tiny --freeze-llm
+# 2. Linear probe: Does emergence occur? (uses pretrained model from step 1)
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name tiny --freeze-llm --skip-pretrain \
+  --pretrained-model-path "TinyQA_spe200k_20251231-005835/toy_llm_unified_pretrained.pth"
 
-# 3. (Optional) Test if NQ data helps
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name tiny --pretrain-data wiki+nq
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name tiny --pretrain-data wiki+nq --freeze-llm
+# 3. Random baseline: Establish performance floor (skips pretraining entirely)
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name tiny --random-baseline --skip-pretrain
 ```
 
 ### Full Experiment (All Model Sizes)
 
 ```bash
 # Phase 1: Baseline capability check (full finetuning)
+# Note the output folder for each (e.g., TinyQA_spe200k_YYYYMMDD-HHMMSS/)
 modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name tiny
 modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name small
 modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name base
 modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name medium
 
 # Phase 2: Test for emergence (linear probe / freeze LLM)
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name tiny --freeze-llm
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name small --freeze-llm
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name base --freeze-llm
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name medium --freeze-llm
+# Use --skip-pretrain and --pretrained-model-path to reuse pretrained models from Phase 1
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name tiny --freeze-llm --skip-pretrain \
+  --pretrained-model-path "TinyQA_spe200k_YYYYMMDD-HHMMSS/toy_llm_unified_pretrained.pth"
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name small --freeze-llm --skip-pretrain \
+  --pretrained-model-path "SmallQA_spe400k_YYYYMMDD-HHMMSS/toy_llm_unified_pretrained.pth"
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name base --freeze-llm --skip-pretrain \
+  --pretrained-model-path "BaseQA_spe800k_YYYYMMDD-HHMMSS/toy_llm_unified_pretrained.pth"
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name medium --freeze-llm --skip-pretrain \
+  --pretrained-model-path "MediumQA_spe1500k_YYYYMMDD-HHMMSS/toy_llm_unified_pretrained.pth"
 ```
 
 ### Listing Saved Models
@@ -114,14 +121,14 @@ The `finetune_stats.json` contains:
 
 ### Step 3: Run Random Baseline (Required for Emergence Score)
 
-The random baseline establishes the performance floor:
+The random baseline establishes the performance floor (no pretraining, random init):
 
 ```bash
-# Run random baseline for each model size
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name tiny --random-baseline
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name small --random-baseline
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name base --random-baseline
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name medium --random-baseline
+# Run random baseline for each model size (skips pretraining entirely)
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name tiny --random-baseline --skip-pretrain
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name small --random-baseline --skip-pretrain
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name base --random-baseline --skip-pretrain
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name medium --random-baseline --skip-pretrain
 ```
 
 ### Step 4: Compute Emergence Metrics
@@ -188,7 +195,7 @@ Create a results table for all experiments:
 
 ```bash
 # Download all epoch snapshots for learning curve plots
-modal volume get llm-models TinyQA_spe200k_20251230-120000/ ./checkpoints/tiny_full/
+modal volume get llm-models TinyQA_spe200k_20251231-005835/ ./checkpoints/tiny_full/
 
 # Plot training curves, CKA heatmaps, emergence vs scale
 python scripts/generate_figures.py --results-dir ./results/
@@ -250,10 +257,15 @@ If a model can't achieve >20% F1 with full finetuning, it won't show emergence.
 
 ```bash
 # Run with frozen LLM for sizes that passed Phase 1
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name tiny --freeze-llm
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name small --freeze-llm
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name base --freeze-llm
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name medium --freeze-llm
+# Use --skip-pretrain and --pretrained-model-path to reuse pretrained models from Phase 1
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name tiny --freeze-llm --skip-pretrain \
+  --pretrained-model-path "<TinyDir>/toy_llm_unified_pretrained.pth"
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name small --freeze-llm --skip-pretrain \
+  --pretrained-model-path "<SmallDir>/toy_llm_unified_pretrained.pth"
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name base --freeze-llm --skip-pretrain \
+  --pretrained-model-path "<BaseDir>/toy_llm_unified_pretrained.pth"
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name medium --freeze-llm --skip-pretrain \
+  --pretrained-model-path "<MediumDir>/toy_llm_unified_pretrained.pth"
 ```
 
 **Record:** Final validation F1 for each size.
@@ -296,11 +308,15 @@ Use the `--pretrain-data` flag to compare WikiText-only vs WikiText+NQ pretraini
 ```bash
 # Default: WikiText-103 only (clean emergence test)
 modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name base
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name base --freeze-llm
+# Then frozen experiment using that pretrained model:
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name base --freeze-llm --skip-pretrain \
+  --pretrained-model-path "<BaseWikiDir>/toy_llm_unified_pretrained.pth"
 
 # Ablation: Add nq_open to pretraining (may leak QA patterns)
 modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name base --pretrain-data wiki+nq
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name base --pretrain-data wiki+nq --freeze-llm
+# Then frozen experiment using that pretrained model:
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name base --freeze-llm --skip-pretrain \
+  --pretrained-model-path "<BaseWikiNQDir>/toy_llm_unified_pretrained.pth"
 ```
 
 **Compare:** Does adding nq_open help frozen LLM performance?
@@ -392,17 +408,22 @@ modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name <size>
 # Use WikiText + NQ for pretraining (ablation study)
 modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name <size> --pretrain-data wiki+nq
 
-# Skip pretraining (use existing pretrained model)
+# Skip pretraining (use existing pretrained model from current run dir)
 modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name <size> --skip-pretrain
 
-# Frozen LLM (linear probe)
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name <size> --freeze-llm
+# Frozen LLM with external pretrained model (recommended for linear probe experiments)
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name <size> --freeze-llm --skip-pretrain \
+  --pretrained-model-path "<ModelDir>/toy_llm_unified_pretrained.pth"
 
 # Few-shot finetuning
 modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name <size> --finetune-samples 100
 
 # Combined: frozen + few-shot
-modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name <size> --freeze-llm --finetune-samples 100
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name <size> --freeze-llm --skip-pretrain \
+  --pretrained-model-path "<ModelDir>/toy_llm_unified_pretrained.pth" --finetune-samples 100
+
+# Random baseline (establishes performance floor, skips pretraining)
+modal run pretrain_wikitext_finetune_qasrl_modal.py --config-name <size> --random-baseline --skip-pretrain
 
 # List saved models
 modal run pretrain_wikitext_finetune_qasrl_modal.py --list-saved
@@ -415,9 +436,10 @@ modal run pretrain_wikitext_finetune_qasrl_modal.py --list-saved
 | `--config-name` | tiny, small, base, medium | tiny | Model size configuration |
 | `--pretrain-data` | wiki, wiki+nq | wiki | Pretraining data. Use `wiki` for clean emergence testing |
 | `--freeze-llm` | (flag) | False | Freeze LLM weights, train only QA head (linear probe) |
-| `--random-baseline` | (flag) | False | Skip pretrained weights (random init) for emergence floor |
+| `--random-baseline` | (flag) | False | Use random init (use with --skip-pretrain) for emergence floor |
 | `--finetune-samples` | integer | all | Limit finetuning samples for few-shot experiments |
-| `--skip-pretrain` | (flag) | False | Skip pretraining, use existing model |
+| `--skip-pretrain` | (flag) | False | Skip pretraining phase |
+| `--pretrained-model-path` | path | None | Path to pretrained model (use with --skip-pretrain --freeze-llm) |
 | `--skip-finetune` | (flag) | False | Skip finetuning phase |
 | `--list-saved` | (flag) | False | List all saved models |
 
