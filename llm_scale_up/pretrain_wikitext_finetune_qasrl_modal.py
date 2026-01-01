@@ -189,6 +189,7 @@ def _train_impl(
     pretrain_data: str = "wiki",
     random_baseline: bool = False,
     _continuation_count: int = 0,
+    train_fn=None,  # Modal function reference for spawning continuations
 ):
     """
     Main training function that runs on Modal GPU.
@@ -1349,7 +1350,7 @@ def _train_impl(
                         relative_checkpoint = CHECKPOINT_PATH.replace("/models/", "")
 
                         # Spawn continuation
-                        train.spawn(
+                        train_fn.spawn(
                             config_name=config_name,
                             skip_pretrain=False,
                             skip_finetune=skip_finetune,
@@ -1450,7 +1451,7 @@ def _train_impl(
                     models_volume.commit()
 
                     relative_checkpoint = CHECKPOINT_PATH.replace("/models/", "")
-                    train.spawn(
+                    train_fn.spawn(
                         config_name=config_name,
                         skip_pretrain=False,
                         skip_finetune=skip_finetune,
@@ -1673,7 +1674,7 @@ def _train_impl(
                 models_volume.commit()
 
                 relative_checkpoint = FINETUNE_CHECKPOINT_PATH.replace("/models/", "")
-                train.spawn(
+                train_fn.spawn(
                     config_name=config_name,
                     skip_pretrain=True,  # Pretraining is done
                     skip_finetune=False,
@@ -1780,6 +1781,7 @@ def train_a10g(
         pretrain_data=pretrain_data,
         random_baseline=random_baseline,
         _continuation_count=_continuation_count,
+        train_fn=train_a10g,  # Pass self for spawning continuations
     )
 
 
@@ -1813,6 +1815,7 @@ def train_a100(
         pretrain_data=pretrain_data,
         random_baseline=random_baseline,
         _continuation_count=_continuation_count,
+        train_fn=train_a100,  # Pass self for spawning continuations
     )
 
 
